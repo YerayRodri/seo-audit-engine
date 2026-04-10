@@ -1,0 +1,37 @@
+# Archivos de desarrollo/prueba (no necesarios para la app)
+_refactor.py
+audit_newcop.py
+audit_newcop_v2.py
+audit_step1.py
+config_newcop.py
+diag.py
+inspect_ref.py
+profiler_csv.py
+
+# Datos de auditorías (nunca al repo)
+*.xlsx
+!templates/*.xlsx
+*.csv
+*.zip
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# Exports temporales
+/exports/
+/output/
+/tmp/
+
+# Claude Code session data
+.claude/settings.local.json
+.claude/
+*.bak
