@@ -1667,6 +1667,49 @@ def run_audit(cfg, ruta_csv, output_path):
                      f'Top 10 con CTR <{T_CTR_LOW*100:.0f}% — snippet poco atractivo', 'P1',
                      'Reescribir title con diferenciador. Meta description con CTA. Evaluar rich snippets.', max_n=25)
 
+    # P1: noindex en sitemap
+    if HAS_SITEMAP_DATA and len(df_noindex_in_sitemap) > 0:
+        _sort_ni = 'impressions' if HAS_GSC and 'impressions' in df_noindex_in_sitemap.columns else 'inlinks'
+        _df_ni = df_noindex_in_sitemap.sort_values(_sort_ni, ascending=False) if _sort_ni in df_noindex_in_sitemap.columns else df_noindex_in_sitemap
+        add_url_prio(_df_ni, 'URL no-indexable incluida en sitemap XML', 'P1',
+                     'Eliminar URL del sitemap.xml o corregir la directiva noindex/canonical.', max_n=30)
+
+    # P1: noindex con impresiones GSC
+    if HAS_GSC and len(df_noindex_with_gsc) > 0:
+        add_url_prio(df_noindex_with_gsc.sort_values('impressions', ascending=False),
+                     'Página noindex con impresiones orgánicas — posible pérdida de tráfico', 'P1',
+                     'Revisar si el noindex es intencional. Si debe indexar: eliminar directiva y añadir al sitemap.', max_n=25)
+
+    # P1: páginas lentas >3s
+    if HAS_RESPONSE_TIME and len(df_slow) > 0:
+        _sort_slow = 'impressions' if HAS_GSC and 'impressions' in df_slow.columns else 'inlinks'
+        _df_slow_s = df_slow.sort_values(_sort_slow, ascending=False) if _sort_slow in df_slow.columns else df_slow
+        add_url_prio(_df_slow_s,
+                     f'Tiempo de respuesta >{T_SLOW_RESPONSE:.0f}s — penalización Core Web Vitals', 'P1',
+                     'Optimizar TTFB: caché servidor, CDN, reducir queries. Objetivo <1.8s.', max_n=20)
+
+    # P1: titles duplicados
+    if HAS_TITLE_1 and len(df_dup_titles) > 0:
+        _sort_dt = 'impressions' if HAS_GSC and 'impressions' in df_dup_titles.columns else 'inlinks'
+        _df_dt = df_dup_titles.sort_values(_sort_dt, ascending=False) if _sort_dt in df_dup_titles.columns else df_dup_titles
+        add_url_prio(_df_dt, 'Title duplicado — Google puede ignorar uno de los documentos', 'P1',
+                     'Redactar title único por URL con keyword principal diferenciada.', max_n=20)
+
+    # P2: crawl depth alto con tráfico
+    if HAS_DEPTH_COL and len(df_deep) > 0:
+        _sort_deep = 'impressions' if HAS_GSC and 'impressions' in df_deep.columns else 'inlinks'
+        _df_deep_s = df_deep.sort_values(_sort_deep, ascending=False) if _sort_deep in df_deep.columns else df_deep
+        add_url_prio(_df_deep_s,
+                     f'Crawl depth >{T_MAX_DEPTH} — página importante pero difícil de rastrear', 'P2',
+                     'Añadir enlaces internos desde páginas de mayor jerarquía. Revisar arquitectura de categorías.', max_n=20)
+
+    # P2: URLs indexables ausentes del sitemap (muestra las de mayor tráfico)
+    if HAS_SITEMAP_DATA and len(df_missing_from_sitemap) > 0:
+        _sort_ms = 'impressions' if HAS_GSC and 'impressions' in df_missing_from_sitemap.columns else 'inlinks'
+        _df_ms = df_missing_from_sitemap.sort_values(_sort_ms, ascending=False) if _sort_ms in df_missing_from_sitemap.columns else df_missing_from_sitemap
+        add_url_prio(_df_ms, 'URL indexable ausente del sitemap XML', 'P2',
+                     'Añadir URL al sitemap.xml para facilitar descubrimiento por Googlebot.', max_n=20)
+
     # Deduplicar por URL, conservar la de mayor prioridad
     prio_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3}
     seen = {}
@@ -1829,6 +1872,43 @@ def run_audit(cfg, ruta_csv, output_path):
             r('URLs con demanda y bajo enlazado', f"{n_demand:,}"),
             r('', ''),
         ]
+
+    # Técnico avanzado T21-T32
+    resumen_rows.append(r('▌ TÉCNICO AVANZADO (T21–T32)', ''))
+    # Sitemaps
+    if HAS_SITEMAP_DATA:
+        resumen_rows.append(r('URLs noindex incluidas en sitemap', f"{len(df_noindex_in_sitemap):,}"))
+        resumen_rows.append(r('URLs indexables ausentes del sitemap', f"{len(df_missing_from_sitemap):,}"))
+    else:
+        resumen_rows.append(r('Datos de sitemap', 'N/D — activar "Crawl linked XML Sitemaps" en SF'))
+    # Velocidad
+    if HAS_RESPONSE_TIME:
+        resumen_rows.append(r(f'Páginas lentas >{T_SLOW_RESPONSE:.0f}s (status 200 indexable)', f"{len(df_slow):,}"))
+    else:
+        resumen_rows.append(r('Tiempo de respuesta', 'N/D — activar "Response Time" en SF'))
+    # URLs
+    resumen_rows.append(r(f'URLs indexables con parámetros (?)', f"{len(df_parametered):,}"))
+    resumen_rows.append(r(f'URLs indexables largas (>{T_URL_MAX_LEN} chars)', f"{len(df_long_urls):,}"))
+    # Metadatos
+    if HAS_TITLE_1:
+        resumen_rows.append(r('Páginas con title duplicado', f"{len(df_dup_titles):,} URLs ({n_unique_dup_titles} títulos únicos duplicados)"))
+    if HAS_TITLE_LEN:
+        resumen_rows.append(r('Titles largos (>60 chars) en indexables', f"{len(df_long_titles):,}"))
+    if HAS_TITLE_1 and HAS_H1_COL:
+        resumen_rows.append(r('Title = H1 exacto (páginas indexables)', f"{len(df_title_eq_h1):,}"))
+    # GSC cruzado
+    if HAS_GSC:
+        resumen_rows.append(r('Páginas noindex con impresiones GSC', f"{len(df_noindex_with_gsc):,}"))
+    # Canonicals / estructura
+    if HAS_CANONICAL_COL:
+        resumen_rows.append(r('Páginas 200 indexables sin canonical', f"{len(df_no_canonical):,}"))
+    # Contenido
+    if HAS_H2_COL:
+        resumen_rows.append(r('Páginas SEO sin H2', f"{len(df_no_h2):,}"))
+    # Arquitectura
+    if HAS_DEPTH_COL:
+        resumen_rows.append(r(f'Páginas indexables con depth >{T_MAX_DEPTH}', f"{len(df_deep):,}"))
+    resumen_rows.append(r('', ''))
 
     # Top P0
     p0_tasks = [t for t in tasks if t['Prioridad'] == 'P0']

@@ -682,4 +682,4 @@ if run_btn and uploaded_csv and domain:
     with st.expander("📋 Log del motor"):
         st.code("\n".join(log_lines), language="text")
 
-st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by Screaming Frog + Google Search Console</div>', unsafe_allow_html=True)
+st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by Screaming Frog + Google Search Console &nbsp;·&nbsp; Hecho por <a href="https://yerayrodri.online/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Yeray Rodriguez</a></div>', unsafe_allow_html=True)
