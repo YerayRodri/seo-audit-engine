@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+import pandas as pd
 
 # Asegurar que el módulo audit_engine está en el path
 sys.path.insert(0, str(Path(__file__).parent))
