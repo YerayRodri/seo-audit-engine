@@ -500,23 +500,27 @@ def run_audit(cfg, ruta_csv, output_path):
     HAS_CANONICAL_COL  = 'canonical_link_element_1' in df.columns
 
     # T21 — URLs no-indexables incluidas en el sitemap
-    if HAS_SITEMAP_DATA:
+    if HAS_SITEMAP_DATA and 'indexable' in df.columns:
         _mask_noindex_sitemap = (
             (df['in_sitemap'] == True) &
-            (df['indexability'] != 'Indexable')
+            (df['indexable'].astype(str).str.strip() != idx_pos_val)
         )
         df_noindex_in_sitemap = df[_mask_noindex_sitemap].copy()
+    elif HAS_SITEMAP_DATA:
+        df_noindex_in_sitemap = df[(df['in_sitemap'] == True) & (df['status'] != 200)].copy()
     else:
         df_noindex_in_sitemap = pd.DataFrame(columns=df.columns)
 
     # T22 — URLs indexables ausentes del sitemap
-    if HAS_SITEMAP_DATA:
+    if HAS_SITEMAP_DATA and 'indexable' in df.columns:
         _mask_missing_sitemap = (
             (df['in_sitemap'] == False) &
-            (df['indexability'] == 'Indexable') &
+            (df['indexable'].astype(str).str.strip() == idx_pos_val) &
             (df['status'] == 200)
         )
         df_missing_from_sitemap = df[_mask_missing_sitemap].copy()
+    elif HAS_SITEMAP_DATA:
+        df_missing_from_sitemap = df[(df['in_sitemap'] == False) & (df['status'] == 200)].copy()
     else:
         df_missing_from_sitemap = pd.DataFrame(columns=df.columns)
 
@@ -557,9 +561,14 @@ def run_audit(cfg, ruta_csv, output_path):
         n_unique_dup_titles = 0
 
     # T27 — Páginas noindex con impresiones en GSC
-    if HAS_GSC:
+    if HAS_GSC and 'indexable' in df.columns:
         df_noindex_with_gsc = df[
-            (df['indexability'] != 'Indexable') &
+            (df['indexable'].astype(str).str.strip() != idx_pos_val) &
+            (df['impressions'] > 0)
+        ].copy()
+    elif HAS_GSC:
+        df_noindex_with_gsc = df[
+            (df['status'] != 200) &
             (df['impressions'] > 0)
         ].copy()
     else:
