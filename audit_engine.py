@@ -107,7 +107,9 @@ def run_audit(cfg, ruta_csv, output_path):
     SF_LANG      = pf['lang']
 
     print(f"\nLoading CSV ({RUTA_CSV.split('/')[-1]})...")
-    df_raw = pd.read_csv(RUTA_CSV, low_memory=False)
+    df_raw = pd.read_csv(RUTA_CSV, low_memory=False, encoding='utf-8-sig')
+    # Limpiar BOM y espacios en nombres de columna
+    df_raw.columns = [c.strip().lstrip('\ufeff') for c in df_raw.columns]
     df_raw.rename(columns=RENAME, inplace=True)
 
     # Normalización de columnas Screaming Frog (fallback cuando profiler_csv no aplica)
