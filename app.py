@@ -256,139 +256,276 @@ st.set_page_config(
 # ── CSS personalizado ────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+* { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+
 /* ─── App background ─── */
-.stApp { background: #f0f4f8 !important; }
+.stApp { background: #f1f5f9 !important; }
+.block-container { padding-top: 1.2rem !important; max-width: 1340px !important; }
+
+/* ─── Hide Streamlit chrome ─── */
+#MainMenu, [data-testid="stToolbar"] { visibility: hidden !important; }
 
 /* ─── Hero ─── */
 .seo-hero {
-    background: linear-gradient(135deg, #0f2b4a 0%, #0a4f7e 55%, #085f79 100%);
-    border-radius: 16px;
-    padding: 30px 36px 26px 36px;
-    margin-bottom: 24px;
-    color: white;
-    box-shadow: 0 4px 20px rgba(15,43,74,0.25);
+    background: linear-gradient(135deg, #0b1d35 0%, #0c3260 45%, #0a5282 75%, #0369a1 100%);
+    border-radius: 20px;
+    padding: 38px 48px 34px 48px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(11,29,53,0.35);
+}
+.seo-hero::before {
+    content: '';
+    position: absolute;
+    top: -60px; right: -40px;
+    width: 380px; height: 380px;
+    background: radial-gradient(circle, rgba(6,182,212,0.18) 0%, transparent 65%);
+    pointer-events: none;
+}
+.seo-hero::after {
+    content: '';
+    position: absolute;
+    bottom: -40px; left: 15%;
+    width: 280px; height: 280px;
+    background: radial-gradient(circle, rgba(37,99,235,0.12) 0%, transparent 65%);
+    pointer-events: none;
+}
+.seo-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(6,182,212,0.18);
+    border: 1px solid rgba(6,182,212,0.45);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #67e8f9;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    position: relative;
+    z-index: 1;
 }
 .seo-hero h1 {
-    margin: 0 0 8px 0;
-    font-size: 1.85rem;
-    font-weight: 700;
-    letter-spacing: -0.3px;
+    margin: 0 0 10px 0;
+    font-size: 2.15rem;
+    font-weight: 800;
     color: white !important;
+    letter-spacing: -0.5px;
+    line-height: 1.15;
+    position: relative;
+    z-index: 1;
 }
 .seo-hero p {
     margin: 0;
-    opacity: 0.75;
-    font-size: 0.95rem;
-    color: white !important;
+    color: rgba(255,255,255,0.6) !important;
+    font-size: 0.98rem;
+    line-height: 1.65;
+    max-width: 580px;
+    position: relative;
+    z-index: 1;
 }
 
-/* ─── Section headers ─── */
+/* ─── Section headers (form) ─── */
 .section-header {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding-bottom: 10px;
+    padding-bottom: 12px;
     border-bottom: 2px solid #e2e8f0;
-    margin-bottom: 18px;
+    margin-bottom: 20px;
+    margin-top: 4px;
 }
 .section-number {
-    background: linear-gradient(135deg, #0077b6, #00b4d8);
+    background: linear-gradient(135deg, #2563eb, #06b6d4);
     color: white;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     font-size: 0.78rem;
     font-weight: 700;
     flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.3);
 }
 .section-title {
-    font-size: 1.0rem;
+    font-size: 0.95rem;
     font-weight: 600;
     color: #1e293b;
     margin: 0;
 }
 
+/* ─── Dashboard section headers ─── */
+.dash-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.0rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 24px 0 16px 0;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+/* ─── Custom KPI cards ─── */
+.kpi-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 22px 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s, transform 0.2s;
+    height: 100%;
+    box-sizing: border-box;
+}
+.kpi-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,0.1); transform: translateY(-1px); }
+.kpi-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 10px;
+}
+.kpi-value {
+    font-size: 2.1rem;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1;
+}
+.kpi-sub { font-size: 0.7rem; color: #94a3b8; margin-top: 6px; }
+
 /* ─── File uploader ─── */
 [data-testid="stFileUploaderDropzone"] {
-    border: 2px dashed #93c5fd !important;
-    border-radius: 12px !important;
+    border: 2px dashed #bfdbfe !important;
+    border-radius: 14px !important;
     background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%) !important;
-    transition: border-color 0.2s, background 0.2s;
+    transition: all 0.2s;
 }
 [data-testid="stFileUploaderDropzone"]:hover {
-    border-color: #0077b6 !important;
+    border-color: #2563eb !important;
     background: #dbeafe !important;
 }
 
-/* ─── Primary buttons ─── */
+/* ─── Primary button ─── */
 button[data-testid="baseButton-primary"],
 .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #0077b6 0%, #00b4d8 100%) !important;
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #0284c7 100%) !important;
     border: none !important;
-    border-radius: 10px !important;
+    border-radius: 12px !important;
     font-size: 1rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.02em !important;
-    box-shadow: 0 4px 14px rgba(0,119,182,0.35) !important;
-    transition: opacity 0.2s, box-shadow 0.2s !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: 0 4px 18px rgba(37,99,235,0.38) !important;
+    transition: all 0.2s !important;
 }
 button[data-testid="baseButton-primary"]:hover:not(:disabled),
 .stButton > button[kind="primary"]:hover:not(:disabled) {
-    opacity: 0.9 !important;
-    box-shadow: 0 6px 18px rgba(0,119,182,0.45) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 8px 24px rgba(37,99,235,0.48) !important;
 }
 button[data-testid="baseButton-primary"]:disabled,
 .stButton > button[kind="primary"]:disabled {
-    background: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%) !important;
+    background: linear-gradient(135deg, #cbd5e1, #94a3b8) !important;
     box-shadow: none !important;
 }
 
 /* ─── Download button ─── */
 .stDownloadButton > button {
-    background: linear-gradient(135deg, #059669 0%, #10b981 100%) !important;
+    background: linear-gradient(135deg, #047857, #10b981) !important;
     border: none !important;
-    border-radius: 10px !important;
-    font-weight: 600 !important;
-    box-shadow: 0 4px 14px rgba(5,150,105,0.35) !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 18px rgba(5,150,105,0.38) !important;
     color: white !important;
+    transition: all 0.2s !important;
 }
-.stDownloadButton > button:hover { opacity: 0.9 !important; }
+.stDownloadButton > button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 8px 24px rgba(5,150,105,0.48) !important;
+}
 
-/* ─── Métricas resultado ─── */
+/* ─── Native st.metric ─── */
 [data-testid="metric-container"] {
     background: white;
     border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 18px 22px !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    border-radius: 14px;
+    padding: 18px 20px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
+[data-testid="stMetricValue"] { font-size: 1.55rem !important; font-weight: 800 !important; color: #0f172a !important; }
+[data-testid="stMetricLabel"] { font-size: 0.7rem !important; font-weight: 700 !important; color: #64748b !important; text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* ─── Expanders ─── */
 [data-testid="stExpander"] {
     border: 1px solid #e2e8f0 !important;
-    border-radius: 10px !important;
+    border-radius: 14px !important;
     background: white !important;
     margin-bottom: 10px !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
     overflow: hidden;
+}
+[data-testid="stExpander"]:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.08) !important; }
+
+/* ─── Tabs ─── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: #e8eef5;
+    border-radius: 12px;
+    padding: 4px;
+    border: none !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    border-radius: 9px !important;
+    padding: 8px 22px !important;
+    font-weight: 600 !important;
+    font-size: 0.875rem !important;
+    color: #64748b !important;
+    background: transparent !important;
+    border: none !important;
+}
+[data-testid="stTabs"] [aria-selected="true"] {
+    background: white !important;
+    color: #1d4ed8 !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
 }
 
 /* ─── Dividers ─── */
-hr { border-color: #e2e8f0 !important; margin: 20px 0 !important; }
+hr { border-color: #e2e8f0 !important; margin: 24px 0 !important; }
 
-/* ─── Alert boxes ─── */
-[data-testid="stAlert"] { border-radius: 10px !important; }
+/* ─── Alerts ─── */
+[data-testid="stAlert"] { border-radius: 12px !important; }
+
+/* ─── Dataframes ─── */
+[data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; }
+
+/* ─── Inputs ─── */
+[data-testid="stTextInput"] label,
+[data-testid="stSelectbox"] label,
+[data-testid="stNumberInput"] label {
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    color: #374151 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
 
 /* ─── Footer ─── */
 .seo-footer {
     text-align: center;
-    padding: 20px 0 4px 0;
+    padding: 28px 0 8px 0;
     color: #94a3b8;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     border-top: 1px solid #e2e8f0;
-    margin-top: 40px;
+    margin-top: 52px;
+    letter-spacing: 0.02em;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -396,8 +533,9 @@ hr { border-color: #e2e8f0 !important; margin: 20px 0 !important; }
 # ── Hero header ───────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="seo-hero">
+  <div class="seo-hero-badge">⚡ Technical SEO Tool</div>
   <h1>🔍 SEO Audit Engine</h1>
-  <p>Sube tu export de Screaming Frog, configura el cliente y descarga el Excel de auditoría.</p>
+  <p>Genera auditorías SEO técnicas completas a partir de exports de Screaming Frog y Search Console. Priorización automática P0–P3, dashboard visual e informe Excel listo para presentar.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -704,23 +842,53 @@ if run_btn and uploaded_csv and domain:
         else:
             hs_color, hs_label = "#ef4444", "Crítico"
 
-        hs_col, k1, k2, k3, k4 = st.columns([1.6, 1, 1, 1, 1])
+        hs_col, k1, k2, k3, k4 = st.columns([1.8, 1, 1, 1, 1])
         hs_col.markdown(f"""
-        <div style="background:white;border:3px solid {hs_color};border-radius:16px;
-          padding:22px 20px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.08)">
-          <div style="font-size:3.2rem;font-weight:800;color:{hs_color};line-height:1">{hs}</div>
-          <div style="font-size:0.72rem;color:#64748b;margin-top:2px">SEO Health Score / 100</div>
-          <div style="font-size:0.88rem;font-weight:700;color:{hs_color};margin-top:6px">{hs_label}</div>
+        <div style="background:white;border:3px solid {hs_color};border-radius:18px;
+          padding:26px 24px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.09);
+          height:100%;box-sizing:border-box;position:relative;overflow:hidden">
+          <div style="position:absolute;top:-20px;right:-20px;width:90px;height:90px;
+            background:radial-gradient(circle,{hs_color}22 0%,transparent 70%);pointer-events:none"></div>
+          <div style="font-size:3.6rem;font-weight:800;color:{hs_color};line-height:1.05">{hs}</div>
+          <div style="font-size:0.68rem;font-weight:700;color:#94a3b8;margin-top:4px;
+            text-transform:uppercase;letter-spacing:0.08em">SEO Health Score / 100</div>
+          <div style="display:inline-flex;align-items:center;gap:5px;margin-top:10px;
+            background:{hs_color}18;border:1px solid {hs_color}50;border-radius:20px;
+            padding:4px 14px">
+            <span style="font-size:0.82rem;font-weight:700;color:{hs_color}">{hs_label}</span>
+          </div>
         </div>""", unsafe_allow_html=True)
-        k1.metric("Total HTML",    f"{dash.get('total_html', 0):,}")
-        k2.metric("Indexables",    f"{dash.get('total_indexable', 0):,}")
-        k3.metric("Issues P0 🚨",  tbp.get('P0', 0))
-        k4.metric("Issues P1 ⚠️",  tbp.get('P1', 0))
+        k1.markdown(f"""
+        <div class="kpi-card">
+          <div class="kpi-label">Total HTML</div>
+          <div class="kpi-value">{dash.get('total_html', 0):,}</div>
+          <div class="kpi-sub">URLs rastreadas</div>
+        </div>""", unsafe_allow_html=True)
+        k2.markdown(f"""
+        <div class="kpi-card">
+          <div class="kpi-label">Indexables</div>
+          <div class="kpi-value" style="color:#10b981">{dash.get('total_indexable', 0):,}</div>
+          <div class="kpi-sub">URLs en índice</div>
+        </div>""", unsafe_allow_html=True)
+        _p0 = tbp.get('P0', 0)
+        k3.markdown(f"""
+        <div class="kpi-card" style="border-color:{'#fecaca' if _p0 > 0 else '#e2e8f0'}">
+          <div class="kpi-label">🚨 Issues P0</div>
+          <div class="kpi-value" style="color:{'#ef4444' if _p0 > 0 else '#10b981'}">{_p0}</div>
+          <div class="kpi-sub">Críticos urgentes</div>
+        </div>""", unsafe_allow_html=True)
+        _p1 = tbp.get('P1', 0)
+        k4.markdown(f"""
+        <div class="kpi-card" style="border-color:{'#fde68a' if _p1 > 0 else '#e2e8f0'}">
+          <div class="kpi-label">⚠️ Issues P1</div>
+          <div class="kpi-value" style="color:{'#d97706' if _p1 > 0 else '#10b981'}">{_p1}</div>
+          <div class="kpi-sub">Importantes</div>
+        </div>""", unsafe_allow_html=True)
 
         st.markdown("---")
 
         # ── Inventario del Crawl ──────────────────────────────────────────────
-        st.markdown("### 🗂️ Inventario del Crawl")
+        st.markdown('<div class="dash-section">🗂️ Inventario del Crawl</div>', unsafe_allow_html=True)
         inv1, inv2 = st.columns(2)
 
         with inv1:
@@ -751,7 +919,7 @@ if run_btn and uploaded_csv and domain:
         st.markdown("---")
 
         # ── Calidad On-Page ───────────────────────────────────────────────────
-        st.markdown("### ✏️ Calidad On-Page")
+        st.markdown('<div class="dash-section">✏️ Calidad On-Page</div>', unsafe_allow_html=True)
         _seo_tot = max(dash.get('n_seo_pages', 1), 1)
         _onpage_issues = [
             ("Sin meta description",    dash.get('n_no_meta',      0), _seo_tot, "#ef4444"),
@@ -785,37 +953,96 @@ if run_btn and uploaded_csv and domain:
         st.markdown("---")
 
         # ── Técnico ───────────────────────────────────────────────────────────
-        st.markdown("### ⚙️ Técnico")
+        st.markdown('<div class="dash-section">⚙️ Técnico</div>', unsafe_allow_html=True)
+        def _tc_card(label, value, warn=False, na=False):
+            clr = '#f59e0b' if warn and not na else ('#94a3b8' if na else '#0f172a')
+            border = '#fde68a' if warn and not na else '#e2e8f0'
+            v_html = f'<span style="font-size:0.72rem;color:#94a3b8">{value}</span>' if na \
+                     else f'<span style="font-size:1.75rem;font-weight:800;color:{clr}">{value}</span>'
+            return f"""<div style="background:white;border:1px solid {border};
+              border-radius:14px;padding:18px 20px;box-shadow:0 1px 5px rgba(0,0,0,0.05);
+              margin-bottom:8px">
+              <div style="font-size:0.68rem;font-weight:700;color:#64748b;text-transform:uppercase;
+                letter-spacing:0.07em;margin-bottom:8px">{label}</div>
+              {v_html}
+            </div>"""
         _tc1, _tc2, _tc3, _tc4 = st.columns(4)
-        _tc1.metric("Paginación indexable",  f"{dash.get('n_pag_indexable', 0):,}")
-        _tc2.metric("URLs con parámetros",   f"{dash.get('n_parametered',   0):,}")
-        _tc3.metric("URLs largas (>115ch)",  f"{dash.get('n_long_urls',     0):,}")
-        _tc4.metric("Depth alto (>4)",       f"{dash.get('n_deep',          0):,}")
+        _tc1.markdown(_tc_card("Paginación indexable", f"{dash.get('n_pag_indexable', 0):,}",
+                      warn=dash.get('n_pag_indexable', 0) > 0), unsafe_allow_html=True)
+        _tc2.markdown(_tc_card("URLs con parámetros", f"{dash.get('n_parametered', 0):,}",
+                      warn=dash.get('n_parametered', 0) > 0), unsafe_allow_html=True)
+        _tc3.markdown(_tc_card("URLs largas (>115ch)", f"{dash.get('n_long_urls', 0):,}",
+                      warn=dash.get('n_long_urls', 0) > 0), unsafe_allow_html=True)
+        _tc4.markdown(_tc_card("Depth alto (>4)", f"{dash.get('n_deep', 0):,}",
+                      warn=dash.get('n_deep', 0) > 0), unsafe_allow_html=True)
 
         _tc5, _tc6, _tc7, _tc8 = st.columns(4)
-        _tc5.metric("Doble barra (//) idx.", f"{dash.get('n_double_slash', 0):,}")
-        _tc6.metric("Noindex en sitemap",
-                    f"{dash.get('n_noindex_in_sitemap',   0):,}" if dash.get('has_sitemap_data')   else "N/D — activar sitemap SF")
-        _tc7.metric("Páginas lentas (>3s)",
-                    f"{dash.get('n_slow',                 0):,}" if dash.get('has_response_time')  else "N/D — activar resp. time SF")
-        _tc8.metric("Ausentes del sitemap",
-                    f"{dash.get('n_missing_from_sitemap', 0):,}" if dash.get('has_sitemap_data')   else "N/D — activar sitemap SF")
+        _tc5.markdown(_tc_card("Doble barra (//) idx.", f"{dash.get('n_double_slash', 0):,}",
+                      warn=dash.get('n_double_slash', 0) > 0), unsafe_allow_html=True)
+        _tc6.markdown(_tc_card("Noindex en sitemap",
+                      f"{dash.get('n_noindex_in_sitemap', 0):,}" if dash.get('has_sitemap_data') else "N/D — activa sitemap en SF",
+                      warn=dash.get('n_noindex_in_sitemap', 0) > 0,
+                      na=not dash.get('has_sitemap_data')), unsafe_allow_html=True)
+        _tc7.markdown(_tc_card("Páginas lentas (>3s)",
+                      f"{dash.get('n_slow', 0):,}" if dash.get('has_response_time') else "N/D — activa resp. time en SF",
+                      warn=dash.get('n_slow', 0) > 0,
+                      na=not dash.get('has_response_time')), unsafe_allow_html=True)
+        _tc8.markdown(_tc_card("Ausentes del sitemap",
+                      f"{dash.get('n_missing_from_sitemap', 0):,}" if dash.get('has_sitemap_data') else "N/D — activa sitemap en SF",
+                      warn=dash.get('n_missing_from_sitemap', 0) > 0,
+                      na=not dash.get('has_sitemap_data')), unsafe_allow_html=True)
 
         st.markdown("---")
 
         # ── GSC ───────────────────────────────────────────────────────────────
         if dash.get('has_gsc'):
-            st.markdown("### 📈 Señales GSC")
+            st.markdown('<div class="dash-section">📈 Señales GSC</div>', unsafe_allow_html=True)
             _gc1, _gc2, _gc3, _gc4 = st.columns(4)
-            _gc1.metric("Impresiones totales",      f"{dash.get('total_impressions', 0):,}")
-            _gc2.metric("Clics totales",             f"{dash.get('total_clicks',      0):,}")
-            _gc3.metric("CTR global",                f"{dash.get('overall_ctr',       0):.2%}")
-            _gc4.metric("Oport. pos. 11-20",         f"{dash.get('n_pos_11_20',       0):,}")
+            _gc1.markdown(f"""
+            <div class="kpi-card">
+              <div class="kpi-label">Impresiones totales</div>
+              <div class="kpi-value">{dash.get('total_impressions', 0):,}</div>
+              <div class="kpi-sub">Visibilidad total</div>
+            </div>""", unsafe_allow_html=True)
+            _gc2.markdown(f"""
+            <div class="kpi-card">
+              <div class="kpi-label">Clics totales</div>
+              <div class="kpi-value" style="color:#2563eb">{dash.get('total_clicks', 0):,}</div>
+              <div class="kpi-sub">Tráfico orgánico</div>
+            </div>""", unsafe_allow_html=True)
+            _gc3.markdown(f"""
+            <div class="kpi-card">
+              <div class="kpi-label">CTR global</div>
+              <div class="kpi-value">{dash.get('overall_ctr', 0):.2%}</div>
+              <div class="kpi-sub">Promedio del sitio</div>
+            </div>""", unsafe_allow_html=True)
+            _gc4.markdown(f"""
+            <div class="kpi-card" style="border-color:#bfdbfe">
+              <div class="kpi-label">🎯 Oport. pos. 11–20</div>
+              <div class="kpi-value" style="color:#2563eb">{dash.get('n_pos_11_20', 0):,}</div>
+              <div class="kpi-sub">Quick wins</div>
+            </div>""", unsafe_allow_html=True)
 
             _gc5, _gc6, _gc7, _ = st.columns(4)
-            _gc5.metric("CTR bajo en Top 10",        f"{dash.get('n_low_ctr',         0):,}")
-            _gc6.metric("Impresiones sin clics",     f"{dash.get('n_impr_no_clicks',  0):,}")
-            _gc7.metric("Noindex con tráfico 🚨",    f"{dash.get('n_noindex_with_gsc',0):,}")
+            _gc5.markdown(f"""
+            <div class="kpi-card" style="border-color:#fde68a">
+              <div class="kpi-label">CTR bajo en Top 10</div>
+              <div class="kpi-value" style="color:#d97706">{dash.get('n_low_ctr', 0):,}</div>
+              <div class="kpi-sub">Optimizar snippet</div>
+            </div>""", unsafe_allow_html=True)
+            _gc6.markdown(f"""
+            <div class="kpi-card">
+              <div class="kpi-label">Impresiones sin clics</div>
+              <div class="kpi-value" style="color:#d97706">{dash.get('n_impr_no_clicks', 0):,}</div>
+              <div class="kpi-sub">CTR = 0</div>
+            </div>""", unsafe_allow_html=True)
+            _ni = dash.get('n_noindex_with_gsc', 0)
+            _gc7.markdown(f"""
+            <div class="kpi-card" style="border-color:{'#fecaca' if _ni > 0 else '#e2e8f0'}">
+              <div class="kpi-label">🚨 Noindex con tráfico</div>
+              <div class="kpi-value" style="color:{'#ef4444' if _ni > 0 else '#10b981'}">{_ni:,}</div>
+              <div class="kpi-sub">Visibilidad bloqueada</div>
+            </div>""", unsafe_allow_html=True)
 
             _top_pages = dash.get('top_gsc_pages', [])
             if _top_pages:
@@ -834,7 +1061,7 @@ if run_btn and uploaded_csv and domain:
             st.markdown("---")
 
         # ── Plan de Acción — Tareas ───────────────────────────────────────────
-        st.markdown("### 📋 Plan de Acción")
+        st.markdown('<div class="dash-section">📋 Plan de Acción</div>', unsafe_allow_html=True)
         _tasks_list = dash.get('tasks_list', [])
         _PRIO_CFG = {
             'P0': ('🚨', '#fef2f2', '#ef4444', '#dc2626', 'CRÍTICO — acción inmediata'),
