@@ -6,7 +6,7 @@ audit_step1.py
 config_newcop.py
 diag.py
 inspect_ref.py
-profiler_csv.py
+
 
 # Datos de auditorías (nunca al repo)
 *.xlsx
