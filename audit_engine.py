@@ -110,6 +110,32 @@ def run_audit(cfg, ruta_csv, output_path):
     df_raw = pd.read_csv(RUTA_CSV, low_memory=False)
     df_raw.rename(columns=RENAME, inplace=True)
 
+    # Normalización de columnas Screaming Frog (fallback cuando profiler_csv no aplica)
+    SF_COL_MAP = {
+        'Address': 'url',
+        'Status Code': 'status',
+        'Indexability': 'indexability',
+        'Title 1': 'title',
+        'Title 1 Length': 'title_len',
+        'Meta Description 1': 'meta_description',
+        'Meta Description 1 Length': 'meta_description_len',
+        'H1-1': 'h1',
+        'H2-1': 'h2',
+        'Canonical Link Element 1': 'canonical',
+        'Meta Robots 1': 'meta_robots',
+        'Crawl Depth': 'depth',
+        'Inlinks': 'inlinks',
+        'Is In Sitemap': 'in_sitemap',
+        'Content Type': 'content_type',
+        'Word Count': 'word_count',
+        'Size (bytes)': 'size',
+        'Response Time': 'response_time',
+    }
+    sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
+    if sf_rename:
+        df_raw.rename(columns=sf_rename, inplace=True)
+        print(f"  SF columns normalized: {list(sf_rename.keys())}")
+
     # Normalizar decimales antes de coerción numérica
     DECIMAL_FIX_COLS = ['ctr', 'position', 'response_time']
     if DECIMAL_COMMA:
