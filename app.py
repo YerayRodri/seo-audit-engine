@@ -855,4 +855,4 @@ if run_btn and uploaded_csv and domain:
                       <div style="font-size:0.76rem;color:#64748b;margin-top:4px">{_t['evidence']}</div>
                     </div>""", unsafe_allow_html=True)
 
-st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by Screaming Frog + Google Search Console &nbsp;·&nbsp; Hecho por <a href="https://yerayrodri.online/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Yeray Rodriguez</a></div>', unsafe_allow_html=True)
+st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by <a href="https://www.visibilidadon.com/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Visibilidad ON</a> &nbsp;·&nbsp; Hecho por <a href="https://yerayrodri.online/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Yeray Rodriguez</a></div>', unsafe_allow_html=True)
