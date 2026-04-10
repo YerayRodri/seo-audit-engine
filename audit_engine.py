@@ -130,11 +130,21 @@ def run_audit(cfg, ruta_csv, output_path):
         'Word Count': 'word_count',
         'Size (bytes)': 'size',
         'Response Time': 'response_time',
+        'Indexability Status': 'indexability_status',
     }
     sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
     if sf_rename:
         df_raw.rename(columns=sf_rename, inplace=True)
         print(f"  SF columns normalized: {list(sf_rename.keys())}")
+
+    # Auto-detectar GSC (cuando profiler_csv no está disponible, e.g. cloud)
+    if not HAS_GSC:
+        HAS_GSC = (
+            'impressions' in df_raw.columns and
+            pd.to_numeric(df_raw['impressions'], errors='coerce').fillna(0).sum() > 0
+        )
+        if HAS_GSC:
+            print("  GSC data auto-detected from columns")
 
     # Normalizar decimales antes de coerción numérica
     DECIMAL_FIX_COLS = ['ctr', 'position', 'response_time']
@@ -149,9 +159,12 @@ def run_audit(cfg, ruta_csv, output_path):
         if col in df_raw.columns:
             df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce').fillna(0)
 
-    # Normalizar CTR 0-100 → 0-1
-    if HAS_GSC and pf['ctr_scale'] == '0-100' and 'ctr' in df_raw.columns:
-        df_raw['ctr'] = df_raw['ctr'] / 100
+    # Normalizar CTR 0-100 → 0-1 (auto-detect escala)
+    if HAS_GSC and 'ctr' in df_raw.columns:
+        _ctr_num = pd.to_numeric(df_raw['ctr'], errors='coerce').fillna(0)
+        if _ctr_num.max() > 1:
+            df_raw['ctr'] = _ctr_num / 100
+            print("  CTR normalizado de escala 0-100 a 0-1")
 
     # Filtrar HTML
     if 'content_type' in df_raw.columns:
@@ -334,7 +347,7 @@ def run_audit(cfg, ruta_csv, output_path):
     # On-page (páginas SEO)
     df_seo = df_indexable[df_indexable['url_type'].isin(SEO_TYPES)]
 
-    meta_col = 'meta_desc'
+    meta_col = 'meta_description'
     if meta_col in df.columns:
         df_no_meta = df_seo[df_seo[meta_col].isna() | (df_seo[meta_col].astype(str).str.strip() == '')]
         n_no_meta_products    = len(df_no_meta[df_no_meta['url_type'] == 'product'])
