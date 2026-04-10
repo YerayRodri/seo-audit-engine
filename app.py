@@ -258,7 +258,12 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-* { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+html, body, .stApp, .block-container,
+p, div:not([data-baseweb]), span, a, li, td, th, input, textarea, select,
+h1, h2, h3, h4, h5, h6,
+button:not([data-testid="stBaseButton-secondary"]):not([data-testid="stFileUploaderDeleteBtn"]) {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
 
 /* ─── App background ─── */
 .stApp { background: #f1f5f9 !important; }
@@ -470,9 +475,27 @@ button[data-testid="baseButton-primary"]:disabled,
     background: white !important;
     margin-bottom: 10px !important;
     box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-    overflow: hidden;
 }
 [data-testid="stExpander"]:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.08) !important; }
+/* Fix expander header button layout — prevent arrow/label overlap */
+[data-testid="stExpander"] [data-testid="stExpanderToggleIcon"],
+[data-testid="stExpander"] summary svg {
+    flex-shrink: 0 !important;
+    min-width: 16px !important;
+}
+[data-testid="stExpander"] > details > summary,
+[data-testid="stExpander"] [role="button"] {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 14px 18px !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    color: #1e293b !important;
+    cursor: pointer !important;
+    list-style: none !important;
+}
+[data-testid="stExpander"] > details > summary::-webkit-details-marker { display: none !important; }
 
 /* ─── Tabs ─── */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
