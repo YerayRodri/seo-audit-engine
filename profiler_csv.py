@@ -185,6 +185,30 @@ COLUMN_MAP = {
         'it': 'Posizione',
         'pt': 'Posição',
     },
+    'in_sitemap': {
+        'es': 'Está en el sitemap',
+        'en': 'Is In Sitemap',
+        'fr': 'Dans le sitemap',
+        'de': 'Im Sitemap',
+        'it': 'Nel sitemap',
+        'pt': 'No sitemap',
+    },
+    'response_time': {
+        'es': 'Tiempo de respuesta',
+        'en': 'Response Time',
+        'fr': 'Temps de réponse',
+        'de': 'Antwortzeit',
+        'it': 'Tempo di risposta',
+        'pt': 'Tempo de resposta',
+    },
+    'size': {
+        'es': 'Tamaño (bytes)',
+        'en': 'Size (bytes)',
+        'fr': 'Taille (octets)',
+        'de': 'Größe (Bytes)',
+        'it': 'Dimensione (byte)',
+        'pt': 'Tamanho (bytes)',
+    },
 }
 
 # Columnas que determinan el idioma (las más distintivas)

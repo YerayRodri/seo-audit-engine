@@ -78,6 +78,9 @@ def run_audit(cfg, ruta_csv, output_path):
     T_POS_OPP_MIN          = THRESHOLDS.get('pos_opportunity_min', 11)
     T_POS_OPP_MAX          = THRESHOLDS.get('pos_opportunity_max', 20)
     T_TITLE_SHORT_CHARS    = THRESHOLDS.get('title_short_chars', 40)
+    T_INLINKS_4XX_CRITICAL = THRESHOLDS.get('inlinks_4xx_critical', 500)
+    T_WORD_COUNT_THIN      = THRESHOLDS.get('word_count_thin', 150)
+    T_ORPHAN_IMPRESSIONS   = THRESHOLDS.get('orphan_impressions', 100)
 
     HEADER_BG = getattr(cfg, 'HEADER_BG', '1F4E78')
     P0_BG     = getattr(cfg, 'P0_BG', 'FFDCE0')
@@ -420,6 +423,73 @@ def run_audit(cfg, ruta_csv, output_path):
 
     print(f"  Métricas calculadas. Demand: {n_demand} | Pos11-20: {len(df_pos_11_20)} | Low CTR: {len(df_low_ctr)}")
 
+    # ── Métricas adicionales ────────────────────────────────────────────────────
+
+    # Redirects 302 (temporales)
+    df_302 = df[df['status'] == 302]
+
+    # URLs sensibles indexables (cart, checkout, login, search…)
+    _SENSITIVE = [
+        '/cart', '/checkout', '/login', '/account/', '/register',
+        '/buscar', '/search?', '/cesta', '/carrito', '?q=', '?s=',
+        '/wishlist', '/mi-cuenta', '/my-account', '/basket',
+        '/carro', '/pedido', '/factura',
+    ]
+    _mask_sensitive = df_indexable['url'].apply(
+        lambda u: any(p in u.lower() for p in _SENSITIVE) if isinstance(u, str) else False
+    )
+    df_sensitive = df_indexable[_mask_sensitive]
+
+    # Facetas/filtros indexables
+    FACET_URL_PATTERNS = getattr(cfg, 'FACET_URL_PATTERNS', [])
+    _default_facet_regex = (
+        r'-[\d]+-f\b|[?&](filtro|filter|color|colour|marca|brand|precio|price'
+        r'|sort|order|talla|size|genero|gender|material|acabado|finish)[=]'
+    )
+    _extra_facets = '|'.join([re.escape(p) for p in FACET_URL_PATTERNS]) if FACET_URL_PATTERNS else ''
+    _facet_combined = _default_facet_regex + ('|' + _extra_facets if _extra_facets else '')
+    _mask_facets = df_indexable['url'].apply(
+        lambda u: bool(re.search(_facet_combined, u, re.I)) if isinstance(u, str) else False
+    )
+    df_facets = df_indexable[_mask_facets]
+
+    # Canonical a URL diferente (non-self canonical en páginas indexables)
+    if 'canonical' in df.columns:
+        _mask_non_self_can = (
+            df_indexable['canonical'].notna() &
+            (df_indexable['canonical'].astype(str).str.strip() != '') &
+            (
+                df_indexable['canonical'].astype(str).str.strip()
+                != df_indexable['url'].astype(str).str.strip()
+            )
+        )
+        df_non_self_canonical = df_indexable[_mask_non_self_can]
+    else:
+        df_non_self_canonical = pd.DataFrame(columns=df.columns)
+
+    # Thin content (páginas SEO con word_count muy bajo)
+    if 'word_count' in df.columns:
+        df_thin = df_indexable[
+            (df_indexable['url_type'].isin(SEO_TYPES)) &
+            (df_indexable['word_count'] > 0) &
+            (df_indexable['word_count'] < T_WORD_COUNT_THIN)
+        ]
+    else:
+        df_thin = pd.DataFrame(columns=df.columns)
+
+    # Huérfanas potenciales (tráfico GSC pero 0 inlinks internos)
+    if HAS_GSC and HAS_INLINKS_DATA:
+        df_orphans = df_indexable[
+            (df_indexable['impressions'] > T_ORPHAN_IMPRESSIONS) &
+            (df_indexable['inlinks'] == 0) &
+            (df_indexable['url_type'].isin(SEO_TYPES))
+        ]
+    else:
+        df_orphans = pd.DataFrame(columns=df.columns)
+
+    print(f"  302: {len(df_302)} | Sensibles: {len(df_sensitive)} | Facetas: {len(df_facets)}")
+    print(f"  Non-self canonical: {len(df_non_self_canonical)} | Thin: {len(df_thin)} | Huérfanas: {len(df_orphans)}")
+
 
     # ──────────────────────────────────────────────────────────────────────────────
     # 6. TAREAS
@@ -502,14 +572,29 @@ def run_audit(cfg, ruta_csv, output_path):
     if n_4xx > 0:
         top_404_url  = df_404.nlargest(1, 'impressions').iloc[0]['url'] if n_404 > 0 else ''
         top_404_impr = int(df_404['impressions'].max()) if n_404 > 0 else 0
+
+        # Detalle de inlinks cuando está disponible
+        if HAS_INLINKS_DATA:
+            df_4xx_critical = df_4xx[df_4xx['inlinks'] > T_INLINKS_4XX_CRITICAL]
+            n_4xx_critical  = len(df_4xx_critical)
+            inlinks_detail = (
+                f' De ellas, {n_4xx_critical:,} reciben más de {T_INLINKS_4XX_CRITICAL:,} inlinks internos (prioridad crítica).'
+                if n_4xx_critical > 0 else ''
+            )
+        else:
+            df_4xx_critical = pd.DataFrame(columns=df.columns)
+            n_4xx_critical  = 0
+            inlinks_detail  = ''
+
         evid_404 = (
-            f'{n_4xx:,} URLs con status 4xx (de las cuales {n_404:,} son 404). '
+            f'{n_4xx:,} URLs con status 4xx (de las cuales {n_404:,} son 404).{inlinks_detail} '
             f'La 404 con más demanda GSC: {top_404_url} ({top_404_impr:,} impresiones).'
             if top_404_url else
-            f'{n_4xx:,} URLs con status 4xx (de las cuales {n_404:,} son 404).'
+            f'{n_4xx:,} URLs con status 4xx (de las cuales {n_404:,} son 404).{inlinks_detail}'
         )
+        t03_prioridad = 'P0'
         add_task(
-            'T03', 'P0', 'Técnico / Errores',
+            'T03', t03_prioridad, 'Técnico / Errores',
             f'Corregir {n_4xx:,} URLs con error 4xx ({n_404:,} × 404)',
             f'{n_4xx:,} URLs activas en el crawl devuelven error 4xx. '
             'Pueden estar enlazadas internamente o en sitemaps.',
@@ -517,14 +602,20 @@ def run_audit(cfg, ruta_csv, output_path):
             'URLs eliminadas sin redirect. Cambios de URL sin actualizar enlaces internos. '
             'Errores en la generación de URLs dinámicas.',
             '1. Para cada 404 con tráfico GSC: crear redirect 301 a la URL equivalente. '
-            '2. Identificar qué páginas enlazan a las 404s (SF > All Inlinks). '
+            + (f'2. URGENTE: las {n_4xx_critical:,} URLs con más de {T_INLINKS_4XX_CRITICAL:,} inlinks tienen máximo impacto en PageRank — resolver primero. '
+               if n_4xx_critical > 0 else
+               '2. ') +
+            'Identificar qué páginas enlazan a las 4xx (SF > All Inlinks). '
             '3. Actualizar los enlaces internos rotos. '
-            '4. Eliminar las 404s de sitemaps XML si están presentes.',
+            '4. Eliminar las 4xx de sitemaps XML si están presentes.',
             'SF > Respuesta > Códigos de respuesta > 4xx. GSC > Cobertura > 404.',
             'Medio', 'Alto', 'Alto', 'Dev + SEO',
             'Re-crawl: 0 URLs enlazadas internamente con status 4xx. '
             'GSC Cobertura: reducción de errores 404.',
-            sample_urls(df_404, sort_by='impressions')
+            sample_urls(
+                df_4xx_critical if n_4xx_critical > 0 else df_404,
+                sort_by='inlinks' if HAS_INLINKS_DATA else 'impressions'
+            )
         )
 
     # T04 — Redirects 301 (P1, condicional)
@@ -825,6 +916,170 @@ def run_audit(cfg, ruta_csv, output_path):
             'SF Hreflang: 0 errores de conflicto, URL no rastreable o falta x-default. '
             'GSC Internacional: 0 errores para las versiones principales.',
             f'https://{DOMAIN}/\n' + '\n'.join([f'https://{DOMAIN}/{l}/' for l in SITE_LANGS])
+        )
+
+    # T15 — URLs sensibles indexables (P1, condicional)
+    n_sensitive = len(df_sensitive)
+    if n_sensitive > 0:
+        add_task(
+            'T15', 'P1', 'Indexación / Seguridad',
+            f'Bloquear indexación de {n_sensitive:,} URLs sensibles (carrito, checkout, login…)',
+            f'{n_sensitive:,} URLs de procesos internos o privados son indexables. '
+            'Estas páginas no deben aparecer en Google: no aporten valor y exponen lógica interna.',
+            f'{n_sensitive:,} URLs con patrones sensibles (cart, checkout, login, account, '
+            'search, buscar, cesta…) detectadas como indexables en el crawl.',
+            f'Los templates de {PLATFORM} no añaden meta robots noindex por defecto '
+            'en estas rutas funcionales. Pueden estar en sitemaps y recibir inlinks internos.',
+            '1. Añadir <meta name="robots" content="noindex,nofollow"> en los templates '
+            'de carrito, checkout, login, cuenta y búsqueda. '
+            '2. Añadir Disallow en robots.txt para las rutas /cart/, /checkout/, /login/, '
+            '/account/, /search/. '
+            '3. Eliminar estas URLs de sitemaps XML si están presentes. '
+            '4. Actualizar los enlaces internos para que no apunten a versiones indexables.',
+            'SF > Indexabilidad = Indexable > filtrar URL por cart/checkout/login/account.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-crawl: 0 URLs sensibles con estado Indexable. '
+            'GSC Cobertura: estas URLs desaparecen del índice en 2-4 semanas.',
+            sample_urls(df_sensitive, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T16 — Facetas/filtros indexables (P1, condicional)
+    n_facets = len(df_facets)
+    if n_facets > 0:
+        add_task(
+            'T16', 'P1', 'Indexación / Facetas',
+            f'Añadir noindex + canonical a {n_facets:,} URLs de facetas/filtros indexables',
+            f'{n_facets:,} URLs de navegación facetada (filtros por color, marca, precio, talla…) '
+            'son indexables. Generan contenido duplicado y diluyen autoridad.',
+            f'{n_facets:,} URLs con patrones de facetas (-f, ?filtro=, ?color=, ?marca=, ?sort=…) '
+            'detectadas como indexables. Cada combinación de filtros crea una URL separada '
+            'con contenido prácticamente igual al de la categoría base.',
+            f'El CMS ({PLATFORM}) no bloquea por defecto la indexación de URLs generadas '
+            'por facetas de navegación. Con N filtros y M valores, se generan N×M URLs.',
+            '1. Añadir <meta name="robots" content="noindex"> en el template de resultados '
+            'de filtrado. '
+            '2. Añadir canonical en cada URL de faceta apuntando a la categoría base. '
+            '3. Excluir los patrones de facetas del sitemap XML. '
+            '4. Si algún filtro tiene volumen de búsqueda propio (ej: "zapatillas rojas"), '
+            'crear una landing page dedicada en lugar de usar la URL de faceta.',
+            'SF > All URLs > filtrar URL por patrón -f / ?filtro= / ?color=.',
+            'Bajo', 'Alto', 'Bajo', 'Dev + SEO',
+            'Re-crawl: 0 URLs de facetas con estado Indexable. '
+            'GSC Cobertura: reducción de URLs descubiertas mediante exploración.',
+            sample_urls(df_facets, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T17 — Canonical a URL diferente (P1, condicional)
+    n_non_self_can = len(df_non_self_canonical)
+    if n_non_self_can > 0:
+        top_can_url    = df_non_self_canonical.iloc[0]['url'] if n_non_self_can > 0 else ''
+        top_can_target = df_non_self_canonical.iloc[0]['canonical'] if n_non_self_can > 0 else ''
+        add_task(
+            'T17', 'P1', 'Canonicals / Indexación',
+            f'Revisar {n_non_self_can:,} páginas indexables con canonical apuntando a otra URL',
+            f'{n_non_self_can:,} páginas tienen canonical tag configurado hacia una URL diferente '
+            'a sí mismas. Puede ser intencional (variantes de producto) o un error.',
+            f'{n_non_self_can:,} URLs con canonical ≠ propia URL. '
+            f'Ejemplo: {top_can_url} → canonical: {top_can_target}. '
+            'Si el canonical es incorrecto, Google indexará la URL equivocada.',
+            'Configuración de variantes de producto que apuntan al producto padre. '
+            'Error en templates: canonical hardcodeado o calculado incorrectamente. '
+            'Migración de URLs sin actualizar los canonicals.',
+            '1. Exportar SF > Canonicals > Contains a canonical URL e identificar patrones. '
+            '2. Separar los canonicals intencionales (variantes → padre) de los accidentales. '
+            '3. Para cada canonical incorrecto: corregir el tag en el template. '
+            '4. Si hay variantes legítimas: asegurarse de que la URL canónica es efectivamente '
+            'la versión principal y está bien optimizada.',
+            'SF > Canonicals > Contains a canonical URL (filtrar Indexabilidad = Indexable).',
+            'Medio', 'Alto', 'Medio', 'SEO + Dev',
+            'Re-crawl: las URLs intencionales mantienen canonical correcto. '
+            'Las URLs con canonical erróneo tienen self-canonical. '
+            'GSC: las URLs canónicas declaradas aparecen indexadas correctamente.',
+            sample_urls(df_non_self_canonical, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T18 — Thin content (P2, condicional)
+    n_thin = len(df_thin)
+    if n_thin > 0:
+        avg_thin_wc = int(df_thin['word_count'].mean()) if 'word_count' in df_thin.columns else 0
+        add_task(
+            'T18', 'P2', 'Contenido / Calidad',
+            f'Ampliar o eliminar {n_thin:,} páginas SEO con contenido escaso '
+            f'(< {T_WORD_COUNT_THIN} palabras)',
+            f'{n_thin:,} páginas SEO indexables tienen menos de {T_WORD_COUNT_THIN} palabras. '
+            'Google considera este tipo de contenido "thin" y puede penalizarlo.',
+            f'{n_thin:,} páginas SEO (productos/colecciones/blog) con menos de '
+            f'{T_WORD_COUNT_THIN} palabras (media: {avg_thin_wc} palabras). '
+            'Son páginas que rankearán con dificultad y pueden dañar la percepción de calidad del dominio.',
+            'Templates vacíos o sin rellenar. Páginas creadas automáticamente sin contenido editorial. '
+            'Descripción de producto omitida. Posts de blog en borrador publicados accidentalmente.',
+            f'1. Priorizar las {min(20, n_thin)} páginas con más impresiones en GSC. '
+            '2. Para productos: añadir descripción detallada (>150 palabras): '
+            'características, materiales, uso, beneficios. '
+            '3. Para categorías: añadir texto introductorio SEO de 100-200 palabras al inicio y al final. '
+            '4. Para posts de blog vacíos: completar o poner en noindex/borrador. '
+            '5. Auditar el template para añadir campos de descripción obligatorios.',
+            f'SF > All URLs > filtrar Word Count < {T_WORD_COUNT_THIN} + Indexabilidad = Indexable.',
+            'Alto', 'Medio', 'Bajo', 'SEO + Contenido',
+            f'Re-crawl: 0 páginas SEO con word_count < {T_WORD_COUNT_THIN}. '
+            'GSC: mejora de posición en las páginas ampliadas (evaluar a 30-60 días).',
+            sample_urls(df_thin, sort_by='impressions' if HAS_GSC else 'word_count')
+        )
+
+    # T19 — Redirects 302 (P1, condicional)
+    n_302 = len(df_302)
+    if n_302 > 0:
+        add_task(
+            'T19', 'P1', 'Técnico / Redirects',
+            f'Convertir {n_302:,} redirects 302 (temporales) en 301 permanentes',
+            f'{n_302:,} URLs responden con código 302 (redirect temporal). '
+            'Los 302 no transfieren autoridad de forma fiable y confunden a Google.',
+            f'{n_302:,} redirects 302 detectados en el crawl. '
+            'A diferencia de los 301, los 302 no trasladan PageRank de forma garantizada '
+            'y Google puede indexar tanto la URL de origen como la de destino.',
+            f'Configuración errónea en {PLATFORM} o en el servidor web/CDN. '
+            'Uso de redirecciones temporales para casos que son permanentes '
+            '(ej: 302 de la home sin www → con www).',
+            '1. Identificar el destino de cada 302 (SF > Response Codes > 3xx). '
+            '2. Si la redirección es permanente: cambiar 302 → 301 en el servidor/CMS. '
+            '3. Prestar especial atención a 302s hacia la homepage (muy común en '
+            'configs de dominio y casos de canonicalización de homepage). '
+            '4. Si algún 302 es genuinamente temporal (test A/B): mantenerlo y documentarlo.',
+            'SF > Respuesta > Códigos de respuesta > 3xx > filtrar por código 302.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-crawl: 0 redirects 302 (salvo los genuinamente temporales documentados). '
+            'GSC: mejora de cobertura en las URLs que eran origen de 302.',
+            sample_urls(df_302, sort_by='inlinks' if HAS_INLINKS_DATA else 'url')
+        )
+
+    # T20 — Huérfanas potenciales (P2, requiere GSC + inlinks)
+    n_orphans = len(df_orphans)
+    if n_orphans > 0:
+        top_orphan_url  = df_orphans.nlargest(1, 'impressions').iloc[0]['url']
+        top_orphan_impr = int(df_orphans['impressions'].max())
+        add_task(
+            'T20', 'P2', 'Enlazado Interno / Huérfanas',
+            f'Enlazar {n_orphans:,} páginas huérfanas con tráfico GSC pero sin inlinks internos',
+            f'{n_orphans:,} páginas SEO tienen impresiones en Google (>{T_ORPHAN_IMPRESSIONS:,}) '
+            'pero 0 inlinks internos. Google las encuentra pero el sitio no las enlaza.',
+            f'{n_orphans:,} URLs con más de {T_ORPHAN_IMPRESSIONS:,} impresiones en GSC '
+            f'y 0 inlinks internos en SF. '
+            f'La de mayor volumen: {top_orphan_url} ({top_orphan_impr:,} impresiones). '
+            '0 inlinks = Google trabaja solo para encontrarlas, sin apoyo de la arquitectura.',
+            'Páginas creadas y olvidadas sin actualizar la navegación. '
+            'Productos o posts sin categoría asignada. '
+            'URLs antiguas que sobrevivieron a una migración sin preservar el enlazado.',
+            '1. Exportar este listado y priorizar por impresiones. '
+            '2. Para las 10-15 URLs con más impresiones: identificar 2-3 páginas '
+            'con autoridad (categorías padre, homepage, posts relacionados) que puedan enlazarlas. '
+            '3. Añadir los enlaces con anchor text descriptivo y relevante. '
+            '4. Si la URL no debería existir (contenido obsoleto): redirigir o añadir noindex.',
+            "SF > All URLs > filtrar Unique Inlinks = 0 + Indexabilidad = Indexable. "
+            "Cruzar con GSC > Rendimiento > Páginas ordenado por Impresiones.",
+            'Bajo', 'Alto', 'Bajo', 'SEO + Dev',
+            f'Re-crawl + 30 días: las URLs objetivo tienen ≥3 inlinks internos. '
+            'GSC: mejora de posición media en las URLs enlazadas.',
+            sample_urls(df_orphans.sort_values('impressions', ascending=False))
         )
 
     print(f"  Total tareas: {len(tasks)}")
