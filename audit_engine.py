@@ -116,11 +116,11 @@ def run_audit(cfg, ruta_csv, output_path):
     SF_COL_MAP = {
         'Address': 'url',
         'Status Code': 'status',
-        'Indexability': 'indexability',
+        'Indexability': 'indexable',
         'Title 1': 'title',
         'Title 1 Length': 'title_len',
-        'Meta Description 1': 'meta_description',
-        'Meta Description 1 Length': 'meta_description_len',
+        'Meta Description 1': 'meta_desc',
+        'Meta Description 1 Length': 'meta_desc_len',
         'H1-1': 'h1',
         'H2-1': 'h2',
         'Canonical Link Element 1': 'canonical',
@@ -349,7 +349,7 @@ def run_audit(cfg, ruta_csv, output_path):
     # On-page (páginas SEO)
     df_seo = df_indexable[df_indexable['url_type'].isin(SEO_TYPES)]
 
-    meta_col = 'meta_description'
+    meta_col = 'meta_desc'
     if meta_col in df.columns:
         df_no_meta = df_seo[df_seo[meta_col].isna() | (df_seo[meta_col].astype(str).str.strip() == '')]
         n_no_meta_products    = len(df_no_meta[df_no_meta['url_type'] == 'product'])

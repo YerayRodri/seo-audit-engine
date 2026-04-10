@@ -266,7 +266,9 @@ def profile(csv_path: str, emit_json: bool = False):
     print(f"  Archivo: {csv_path}\n")
 
     # Carga con low_memory=False para evitar DtypeWarnings
-    df = pd.read_csv(csv_path, low_memory=False, encoding='utf-8')
+    # utf-8-sig elimina el BOM que añade Screaming Frog en Windows
+    df = pd.read_csv(csv_path, low_memory=False, encoding='utf-8-sig')
+    df.columns = [c.strip().lstrip('\ufeff') for c in df.columns]
     total_rows = len(df)
     total_cols = len(df.columns)
     cols = list(df.columns)
