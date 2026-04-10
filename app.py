@@ -662,24 +662,197 @@ if run_btn and uploaded_csv and domain:
 
     # ── Resultados ────────────────────────────────────────────────────────────
     st.success("✅ Auditoría completada")
-
-    r_col1, r_col2, r_col3, r_col4 = st.columns(4)
-    r_col1.metric("Tareas generadas",  stats["tasks"])
-    r_col2.metric("URLs prioritarias", stats["urls"])
-    r_col3.metric("Oportunidades GSC", stats["gsc"])
-    r_col4.metric("Filas en Resumen",  stats["resumen"])
-
+    dash = stats.get('dashboard', {})
     fname = f"auditoria-seo-{domain.strip()}-{fecha}.xlsx"
-    st.download_button(
-        label="⬇️ Descargar Excel",
-        data=excel_bytes,
-        file_name=fname,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
-        use_container_width=False,
-    )
 
-    with st.expander("📋 Log del motor"):
+    tab_dash, tab_dl, tab_log = st.tabs(["📊 Dashboard SEO", "⬇️ Descargar Excel", "📋 Log"])
+
+    # ── TAB: Descargar Excel ───────────────────────────────────────────────────
+    with tab_dl:
+        st.markdown("### ⬇️ Informe Excel completo")
+        st.markdown("4 hojas: **Resumen** · **Tareas** · **URLs-Prioridad** · **Oportunidades GSC**")
+        st.download_button(
+            label="⬇️ Descargar Excel",
+            data=excel_bytes,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=False,
+        )
+        st.divider()
+        rc1, rc2, rc3, rc4 = st.columns(4)
+        rc1.metric("Tareas generadas",  stats["tasks"])
+        rc2.metric("URLs prioritarias", stats["urls"])
+        rc3.metric("Oportunidades GSC", stats["gsc"])
+        rc4.metric("Filas en Resumen",  stats["resumen"])
+
+    # ── TAB: Log ──────────────────────────────────────────────────────────────
+    with tab_log:
         st.code("\n".join(log_lines), language="text")
+
+    # ── TAB: Dashboard SEO ────────────────────────────────────────────────────
+    with tab_dash:
+
+        # ── Health Score + KPIs ───────────────────────────────────────────────
+        hs = dash.get('health_score', 0)
+        tbp = dash.get('tasks_by_priority', {})
+        if hs >= 80:
+            hs_color, hs_label = "#10b981", "Saludable"
+        elif hs >= 60:
+            hs_color, hs_label = "#f59e0b", "Con mejoras"
+        else:
+            hs_color, hs_label = "#ef4444", "Crítico"
+
+        hs_col, k1, k2, k3, k4 = st.columns([1.6, 1, 1, 1, 1])
+        hs_col.markdown(f"""
+        <div style="background:white;border:3px solid {hs_color};border-radius:16px;
+          padding:22px 20px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.08)">
+          <div style="font-size:3.2rem;font-weight:800;color:{hs_color};line-height:1">{hs}</div>
+          <div style="font-size:0.72rem;color:#64748b;margin-top:2px">SEO Health Score / 100</div>
+          <div style="font-size:0.88rem;font-weight:700;color:{hs_color};margin-top:6px">{hs_label}</div>
+        </div>""", unsafe_allow_html=True)
+        k1.metric("Total HTML",    f"{dash.get('total_html', 0):,}")
+        k2.metric("Indexables",    f"{dash.get('total_indexable', 0):,}")
+        k3.metric("Issues P0 🚨",  tbp.get('P0', 0))
+        k4.metric("Issues P1 ⚠️",  tbp.get('P1', 0))
+
+        st.markdown("---")
+
+        # ── Inventario del Crawl ──────────────────────────────────────────────
+        st.markdown("### 🗂️ Inventario del Crawl")
+        inv1, inv2 = st.columns(2)
+
+        with inv1:
+            st.caption("**URLs indexables por tipo**")
+            _type_dist = dash.get('indexable_type_dist', {})
+            if _type_dist:
+                _df_types = pd.DataFrame.from_dict(_type_dist, orient='index', columns=['Indexables'])
+                st.bar_chart(_df_types.sort_values('Indexables', ascending=False))
+            else:
+                st.info("Sin datos de tipos de URL")
+
+        with inv2:
+            st.caption("**Distribución HTTP Status**")
+            _status_raw = {
+                '200 OK':        dash.get('status_200', 0),
+                '301 Redirect':  dash.get('status_301', 0),
+                '404 Not Found': dash.get('status_404', 0),
+                '5xx Error':     dash.get('status_5xx', 0),
+                'Sin respuesta': dash.get('status_0',   0),
+            }
+            _status_filtered = {k: v for k, v in _status_raw.items() if v > 0}
+            if _status_filtered:
+                _df_status = pd.DataFrame.from_dict(_status_filtered, orient='index', columns=['URLs'])
+                st.bar_chart(_df_status)
+            else:
+                st.info("Sin datos de status HTTP")
+
+        st.markdown("---")
+
+        # ── Calidad On-Page ───────────────────────────────────────────────────
+        st.markdown("### ✏️ Calidad On-Page")
+        _seo_tot = max(dash.get('n_seo_pages', 1), 1)
+        _onpage_issues = [
+            ("Sin meta description",    dash.get('n_no_meta',      0), _seo_tot, "#ef4444"),
+            ("Sin H1",                  dash.get('n_no_h1',        0), _seo_tot, "#ef4444"),
+            ("Thin content (<150w)",    dash.get('n_thin',         0), _seo_tot, "#ef4444"),
+            ("Titles duplicados",       dash.get('n_dup_titles',   0), _seo_tot, "#f59e0b"),
+            ("Titles largos (>60ch)",   dash.get('n_long_titles',  0), _seo_tot, "#f59e0b"),
+            ("Title = H1 exacto",       dash.get('n_title_eq_h1',  0), _seo_tot, "#f59e0b"),
+            ("Sin H2",                  dash.get('n_no_h2',        0), _seo_tot, "#94a3b8"),
+            ("Sin canonical",           dash.get('n_no_canonical', 0), _seo_tot, "#94a3b8"),
+        ]
+        for _i in range(0, len(_onpage_issues), 2):
+            _row_cols = st.columns(2)
+            for _j, _col in enumerate(_row_cols):
+                if _i + _j < len(_onpage_issues):
+                    _lbl, _cnt, _tot, _clr = _onpage_issues[_i + _j]
+                    _pct = _cnt / _tot if _tot > 0 else 0
+                    _col.markdown(f"""
+                    <div style="background:white;border-radius:10px;padding:14px 18px;
+                      border:1px solid #e2e8f0;margin-bottom:10px">
+                      <div style="display:flex;justify-content:space-between;align-items:center">
+                        <span style="font-size:0.83rem;color:#374151">{_lbl}</span>
+                        <span style="font-size:1.1rem;font-weight:700;color:{_clr}">{_cnt:,}</span>
+                      </div>
+                      <div style="margin-top:8px;background:#f1f5f9;border-radius:4px;height:6px">
+                        <div style="width:{min(_pct * 100, 100):.1f}%;background:{_clr};border-radius:4px;height:6px"></div>
+                      </div>
+                      <div style="font-size:0.71rem;color:#94a3b8;margin-top:4px">{_pct:.1%} de {_tot:,} páginas SEO</div>
+                    </div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Técnico ───────────────────────────────────────────────────────────
+        st.markdown("### ⚙️ Técnico")
+        _tc1, _tc2, _tc3, _tc4 = st.columns(4)
+        _tc1.metric("Paginación indexable",  f"{dash.get('n_pag_indexable', 0):,}")
+        _tc2.metric("URLs con parámetros",   f"{dash.get('n_parametered',   0):,}")
+        _tc3.metric("URLs largas (>115ch)",  f"{dash.get('n_long_urls',     0):,}")
+        _tc4.metric("Depth alto (>4)",       f"{dash.get('n_deep',          0):,}")
+
+        _tc5, _tc6, _tc7, _tc8 = st.columns(4)
+        _tc5.metric("Doble barra (//) idx.", f"{dash.get('n_double_slash', 0):,}")
+        _tc6.metric("Noindex en sitemap",
+                    f"{dash.get('n_noindex_in_sitemap',   0):,}" if dash.get('has_sitemap_data')   else "N/D — activar sitemap SF")
+        _tc7.metric("Páginas lentas (>3s)",
+                    f"{dash.get('n_slow',                 0):,}" if dash.get('has_response_time')  else "N/D — activar resp. time SF")
+        _tc8.metric("Ausentes del sitemap",
+                    f"{dash.get('n_missing_from_sitemap', 0):,}" if dash.get('has_sitemap_data')   else "N/D — activar sitemap SF")
+
+        st.markdown("---")
+
+        # ── GSC ───────────────────────────────────────────────────────────────
+        if dash.get('has_gsc'):
+            st.markdown("### 📈 Señales GSC")
+            _gc1, _gc2, _gc3, _gc4 = st.columns(4)
+            _gc1.metric("Impresiones totales",      f"{dash.get('total_impressions', 0):,}")
+            _gc2.metric("Clics totales",             f"{dash.get('total_clicks',      0):,}")
+            _gc3.metric("CTR global",                f"{dash.get('overall_ctr',       0):.2%}")
+            _gc4.metric("Oport. pos. 11-20",         f"{dash.get('n_pos_11_20',       0):,}")
+
+            _gc5, _gc6, _gc7, _ = st.columns(4)
+            _gc5.metric("CTR bajo en Top 10",        f"{dash.get('n_low_ctr',         0):,}")
+            _gc6.metric("Impresiones sin clics",     f"{dash.get('n_impr_no_clicks',  0):,}")
+            _gc7.metric("Noindex con tráfico 🚨",    f"{dash.get('n_noindex_with_gsc',0):,}")
+
+            _top_pages = dash.get('top_gsc_pages', [])
+            if _top_pages:
+                st.caption("**Top 10 páginas por impresiones**")
+                _df_top = pd.DataFrame(_top_pages)
+                if 'ctr' in _df_top.columns:
+                    _df_top['ctr'] = _df_top['ctr'].apply(lambda x: f"{x:.2%}")
+                if 'impressions' in _df_top.columns:
+                    _df_top['impressions'] = _df_top['impressions'].apply(lambda x: f"{int(x):,}")
+                if 'clicks' in _df_top.columns:
+                    _df_top['clicks'] = _df_top['clicks'].apply(lambda x: f"{int(x):,}")
+                if 'position' in _df_top.columns:
+                    _df_top['position'] = _df_top['position'].apply(lambda x: f"{x:.1f}")
+                st.dataframe(_df_top, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+
+        # ── Plan de Acción — Tareas ───────────────────────────────────────────
+        st.markdown("### 📋 Plan de Acción")
+        _tasks_list = dash.get('tasks_list', [])
+        _PRIO_CFG = {
+            'P0': ('🚨', '#fef2f2', '#ef4444', '#dc2626', 'CRÍTICO — acción inmediata'),
+            'P1': ('⚠️', '#fffbeb', '#d97706', '#b45309', 'IMPORTANTE — próximas semanas'),
+            'P2': ('📌', '#fefce8', '#ca8a04', '#a16207', 'PENDIENTE — próximo sprint'),
+            'P3': ('💡', '#f0fdf4', '#16a34a', '#15803d', 'MEJORA — backlog'),
+        }
+        for _prio in ['P0', 'P1', 'P2', 'P3']:
+            _pt = [t for t in _tasks_list if t.get('priority') == _prio]
+            if not _pt:
+                continue
+            _icon, _bg, _border, _txt, _lbl_p = _PRIO_CFG[_prio]
+            with st.expander(f"{_icon} {_prio} — {_lbl_p} ({len(_pt)} tareas)", expanded=(_prio == 'P0')):
+                for _t in _pt:
+                    st.markdown(f"""
+                    <div style="background:{_bg};border-left:4px solid {_border};
+                      border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:8px">
+                      <div style="font-weight:600;color:{_txt};font-size:0.87rem">[{_t['id']}] {_t['task']}</div>
+                      <div style="font-size:0.76rem;color:#64748b;margin-top:4px">{_t['evidence']}</div>
+                    </div>""", unsafe_allow_html=True)
 
 st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by Screaming Frog + Google Search Console &nbsp;·&nbsp; Hecho por <a href="https://yerayrodri.online/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Yeray Rodriguez</a></div>', unsafe_allow_html=True)

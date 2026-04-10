@@ -2110,12 +2110,89 @@ def run_audit(cfg, ruta_csv, output_path):
     print(f"  Hoja 'URLs-Prioridad':    {len(url_prio_final) + 1} filas")
     print(f"  Hoja 'Oportunidades GSC': {len(gsc_final) + 1} filas")
 
+    # Health score (0-100)
+    _p0 = len([t for t in tasks if t['Prioridad'] == 'P0'])
+    _p1 = len([t for t in tasks if t['Prioridad'] == 'P1'])
+    _p2 = len([t for t in tasks if t['Prioridad'] == 'P2'])
+    _health_score = max(0, 100 - min(36, _p0 * 12) - min(24, _p1 * 3) - min(10, _p2 * 1))
+    _gsc_top_cols = [c for c in ['url', 'impressions', 'clicks', 'ctr', 'position'] if c in df.columns]
+
     return {
         'tasks':       len(tasks),
         'urls':        len(url_prio_final),
         'gsc':         len(gsc_final),
         'resumen':     len(resumen_rows),
         'output_path': output_path,
+        'dashboard': {
+            # Inventario
+            'total_html':           total_html,
+            'total_indexable':      total_indexable,
+            'total_no_indexable':   total_no_indexable,
+            'url_type_dist':        df['url_type'].value_counts().to_dict(),
+            'indexable_type_dist':  df_indexable['url_type'].value_counts().to_dict(),
+            # HTTP Status
+            'status_200':  status_200,
+            'status_301':  status_301_count,
+            'status_404':  status_404_count,
+            'status_5xx':  status_5xx_count,
+            'status_0':    status_0,
+            # Razones no-indexabilidad
+            'blocked_robots': total_blocked_robots,
+            'canonicalized':  total_canonicalized,
+            'redirects_idx':  total_redirects_idx,
+            # On-page quality
+            'n_no_meta':      n_no_meta,
+            'n_no_h1':        n_no_h1,
+            'n_seo_pages':    len(df_seo),
+            'n_dup_titles':   len(df_dup_titles),
+            'n_long_titles':  len(df_long_titles),
+            'n_title_eq_h1':  len(df_title_eq_h1),
+            'n_no_h2':        len(df_no_h2),
+            'n_no_canonical': len(df_no_canonical),
+            'n_thin':         len(df_thin),
+            # Técnico
+            'has_sitemap_data':       HAS_SITEMAP_DATA,
+            'has_response_time':      HAS_RESPONSE_TIME,
+            'n_slow':                 len(df_slow),
+            'n_parametered':          len(df_parametered),
+            'n_long_urls':            len(df_long_urls),
+            'n_deep':                 len(df_deep),
+            'n_double_slash':         len(df_double_slash_indexable),
+            'n_pag_indexable':        n_pag_index,
+            'n_noindex_in_sitemap':   len(df_noindex_in_sitemap),
+            'n_missing_from_sitemap': len(df_missing_from_sitemap),
+            'n_noindex_with_gsc':     len(df_noindex_with_gsc),
+            # GSC
+            'has_gsc':           HAS_GSC,
+            'total_impressions':  total_impressions,
+            'total_clicks':       total_clicks,
+            'overall_ctr':        overall_ctr,
+            'n_pos_11_20':        len(df_pos_11_20),
+            'n_low_ctr':          len(df_low_ctr),
+            'n_impr_no_clicks':   len(df_impr_no_clicks),
+            'n_demand':           n_demand,
+            'top_gsc_pages': (
+                df_gsc.nlargest(10, 'impressions')[_gsc_top_cols].to_dict('records')
+                if HAS_GSC and len(df_gsc) > 0 else []
+            ),
+            # Tareas
+            'tasks_list': [
+                {
+                    'id':       t['ID'],
+                    'priority': t['Prioridad'],
+                    'category': t['Categoría'],
+                    'task':     t['Tarea'],
+                    'evidence': t['Evidencia'][:150],
+                }
+                for t in tasks
+            ],
+            'tasks_by_priority': {
+                p: len([t for t in tasks if t['Prioridad'] == p])
+                for p in ['P0', 'P1', 'P2', 'P3']
+            },
+            # Health score
+            'health_score': _health_score,
+        },
     }
 
 
