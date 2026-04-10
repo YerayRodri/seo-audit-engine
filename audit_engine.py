@@ -490,6 +490,143 @@ def run_audit(cfg, ruta_csv, output_path):
     print(f"  302: {len(df_302)} | Sensibles: {len(df_sensitive)} | Facetas: {len(df_facets)}")
     print(f"  Non-self canonical: {len(df_non_self_canonical)} | Thin: {len(df_thin)} | Huérfanas: {len(df_orphans)}")
 
+    # ─── PRE-CÓMPUTOS T21–T29 ──────────────────────────────────────────────────
+
+    # Flags de disponibilidad de columnas
+    HAS_SITEMAP_DATA   = 'in_sitemap' in df.columns
+    HAS_RESPONSE_TIME  = 'response_time' in df.columns
+    HAS_TITLE_1        = 'title_1' in df.columns
+    HAS_TITLE_LEN      = 'title_1_length' in df.columns
+    HAS_CANONICAL_COL  = 'canonical_link_element_1' in df.columns
+
+    # T21 — URLs no-indexables incluidas en el sitemap
+    if HAS_SITEMAP_DATA:
+        _mask_noindex_sitemap = (
+            (df['in_sitemap'] == True) &
+            (df['indexability'] != 'Indexable')
+        )
+        df_noindex_in_sitemap = df[_mask_noindex_sitemap].copy()
+    else:
+        df_noindex_in_sitemap = pd.DataFrame(columns=df.columns)
+
+    # T22 — URLs indexables ausentes del sitemap
+    if HAS_SITEMAP_DATA:
+        _mask_missing_sitemap = (
+            (df['in_sitemap'] == False) &
+            (df['indexability'] == 'Indexable') &
+            (df['status'] == 200)
+        )
+        df_missing_from_sitemap = df[_mask_missing_sitemap].copy()
+    else:
+        df_missing_from_sitemap = pd.DataFrame(columns=df.columns)
+
+    # T23 — Páginas con tiempo de respuesta >3 s (solo HTML indexables 200)
+    T_SLOW_RESPONSE = 3.0
+    if HAS_RESPONSE_TIME:
+        df_slow = df_indexable[
+            (df_indexable['response_time'] > T_SLOW_RESPONSE) &
+            (df_indexable['status'] == 200)
+        ].copy()
+    else:
+        df_slow = pd.DataFrame(columns=df.columns)
+
+    # T24 — URLs con parámetros indexables
+    df_parametered = df_indexable[
+        df_indexable['url'].str.contains(r'\?', na=False)
+    ].copy()
+
+    # T25 — URLs largas (>115 caracteres) indexables
+    T_URL_MAX_LEN = 115
+    df_long_urls = df_indexable[
+        df_indexable['url'].str.len() > T_URL_MAX_LEN
+    ].copy()
+
+    # T26 — Titles duplicados entre páginas indexables
+    if HAS_TITLE_1:
+        _titles_ser = df_indexable['title_1'].dropna()
+        _titles_ser = _titles_ser[_titles_ser.str.strip() != '']
+        _dup_titles = _titles_ser[_titles_ser.duplicated(keep=False)]
+        df_dup_titles = df_indexable[
+            df_indexable.index.isin(_dup_titles.index)
+        ].copy()
+        n_unique_dup_titles = int(df_indexable.loc[
+            df_indexable.index.isin(_dup_titles.index), 'title_1'
+        ].nunique())
+    else:
+        df_dup_titles = pd.DataFrame(columns=df.columns)
+        n_unique_dup_titles = 0
+
+    # T27 — Páginas noindex con impresiones en GSC
+    if HAS_GSC:
+        df_noindex_with_gsc = df[
+            (df['indexability'] != 'Indexable') &
+            (df['impressions'] > 0)
+        ].copy()
+    else:
+        df_noindex_with_gsc = pd.DataFrame(columns=df.columns)
+
+    # T28 — Titles largos (>60 chars) en páginas indexables
+    if HAS_TITLE_LEN:
+        df_long_titles = df_indexable[
+            df_indexable['title_1_length'] > 60
+        ].copy()
+    else:
+        df_long_titles = pd.DataFrame(columns=df.columns)
+
+    # T29 — Canonical ausente en páginas 200 indexables
+    if HAS_CANONICAL_COL:
+        df_no_canonical = df_indexable[
+            (df_indexable['status'] == 200) &
+            (
+                df_indexable['canonical_link_element_1'].isna() |
+                (df_indexable['canonical_link_element_1'].astype(str).str.strip() == '')
+            )
+        ].copy()
+    else:
+        df_no_canonical = pd.DataFrame(columns=df.columns)
+
+    print(f"  Noindex en sitemap: {len(df_noindex_in_sitemap)} | Faltan en sitemap: {len(df_missing_from_sitemap)}")
+    print(f"  Lentas >3s: {len(df_slow)} | Parámetros: {len(df_parametered)} | URLs largas: {len(df_long_urls)}")
+    print(f"  Titles dup: {len(df_dup_titles)} | Noindex+GSC: {len(df_noindex_with_gsc)} | Sin canonical: {len(df_no_canonical)}")
+
+    # T30 — Sin H2 en páginas indexables SEO
+    HAS_H2_COL = 'h2_1' in df.columns
+    if HAS_H2_COL:
+        df_no_h2 = df_indexable[
+            (df_indexable['url_type'].isin(SEO_TYPES)) &
+            (
+                df_indexable['h2_1'].isna() |
+                (df_indexable['h2_1'].astype(str).str.strip() == '')
+            )
+        ].copy()
+    else:
+        df_no_h2 = pd.DataFrame(columns=df.columns)
+
+    # T31 — Title = H1 exacto (páginas indexables)
+    HAS_H1_COL   = 'h1_1' in df.columns
+    if HAS_TITLE_1 and HAS_H1_COL:
+        _t1 = df_indexable['title_1'].fillna('').astype(str).str.strip().str.lower()
+        _h1 = df_indexable['h1_1'].fillna('').astype(str).str.strip().str.lower()
+        df_title_eq_h1 = df_indexable[
+            (_t1 != '') & (_h1 != '') & (_t1 == _h1)
+        ].copy()
+    else:
+        df_title_eq_h1 = pd.DataFrame(columns=df.columns)
+
+    # T32 — Crawl depth alto (>4 clicks desde home) en páginas indexables con tráfico
+    HAS_DEPTH_COL = 'depth' in df.columns
+    T_MAX_DEPTH   = 4
+    if HAS_DEPTH_COL:
+        _deep_base = df_indexable[df_indexable['depth'] > T_MAX_DEPTH]
+        if HAS_GSC and 'impressions' in _deep_base.columns:
+            df_deep = _deep_base[_deep_base['impressions'] > 0].copy()
+        else:
+            df_deep = _deep_base.copy()
+    else:
+        df_deep = pd.DataFrame(columns=df.columns)
+
+    print(f"  Sin H2: {len(df_no_h2)} | Title=H1: {len(df_title_eq_h1)} | Depth>{T_MAX_DEPTH}: {len(df_deep)}")
+
 
     # ──────────────────────────────────────────────────────────────────────────────
     # 6. TAREAS
@@ -1080,6 +1217,342 @@ def run_audit(cfg, ruta_csv, output_path):
             f'Re-crawl + 30 días: las URLs objetivo tienen ≥3 inlinks internos. '
             'GSC: mejora de posición media en las URLs enlazadas.',
             sample_urls(df_orphans.sort_values('impressions', ascending=False))
+        )
+
+    # T21 — URLs no-indexables en el sitemap XML (P1)
+    n_noindex_sitemap = len(df_noindex_in_sitemap)
+    if HAS_SITEMAP_DATA and n_noindex_sitemap > 0:
+        reasons = df_noindex_in_sitemap['indexability_status'].value_counts().head(3).to_dict() if 'indexability_status' in df_noindex_in_sitemap.columns else {}
+        reasons_str = ', '.join(f'{v}× {k}' for k, v in reasons.items()) if reasons else 'diversas razones'
+        add_task(
+            'T21', 'P1', 'Sitemaps / Inconsistencia con indexación',
+            f'Eliminar {n_noindex_sitemap:,} URLs no-indexables del sitemap XML',
+            f'El sitemap incluye {n_noindex_sitemap:,} URLs que Google no puede indexar '
+            f'(noindex, canonicalizada a otra URL, etc.). '
+            'Diluye el crawl budget y confunde a los bots.',
+            f'{n_noindex_sitemap:,} URLs están en el sitemap pero marcadas como no-indexables en SF. '
+            f'Razones principales: {reasons_str}. '
+            'Google prioriza el sitemap para descubrir URLs indexables; incluir no-indexables '
+            'genera señales contradictorias entre el sitemap y las directivas on-page.',
+            'Sitemap generado automáticamente sin filtrar por indexabilidad. '
+            'Cambios de indexabilidad posteriores a la generación del sitemap. '
+            'Plugin de sitemap sin configuración avanzada.',
+            '1. Filtrar el sitemap para incluir solo URLs status 200 + Indexable. '
+            '2. Si usas un plugin (Yoast, Rank Math…): excluir noindex/canonicalizadas. '
+            '3. Regenerar el sitemap y reenviar en GSC > Sitemaps. '
+            '4. Verificar en GSC > Cobertura que desaparecen las URLs excluidas.',
+            'SF > Sitemaps > Export all crawled in sitemaps. Filtrar Indexability ≠ Indexable.',
+            'Bajo', 'Medio', 'Bajo', 'SEO + Dev',
+            'Re-crawl: 0 URLs no-indexables en sitemap. GSC Cobertura: caída en "Excluida - noindex".',
+            sample_urls(df_noindex_in_sitemap, sort_by='inlinks' if HAS_INLINKS_DATA else 'url')
+        )
+
+    # T22 — URLs indexables ausentes del sitemap (P1)
+    n_missing_sitemap = len(df_missing_from_sitemap)
+    if HAS_SITEMAP_DATA and n_missing_sitemap > 0:
+        add_task(
+            'T22', 'P1', 'Sitemaps / Cobertura incompleta',
+            f'Añadir {n_missing_sitemap:,} URLs indexables al sitemap XML',
+            f'{n_missing_sitemap:,} páginas indexables (status 200) no están en el sitemap. '
+            'Google puede tardar más en descubrirlas y recrawlearlas.',
+            f'{n_missing_sitemap:,} URLs con status 200 e indexabilidad "Indexable" ausentes del sitemap. '
+            'El sitemap actúa como señal de prioridad de rastreo; las URLs fuera de él '
+            'dependen exclusivamente del enlazado interno para su descubrimiento.',
+            'Sitemap configurado con exclusiones excesivas. '
+            'Nuevas secciones del sitio no añadidas al generador de sitemaps. '
+            'Sitemap estático no actualizado.',
+            '1. Identificar qué tipos de URL faltan (categorías, posts, productos…). '
+            '2. Actualizar la configuración del generador de sitemap para incluirlas. '
+            '3. Si el sitemap es estático: añadir las URLs manualmente o migrar a generación dinámica. '
+            '4. Regenerar y reenviar en GSC > Sitemaps.',
+            'SF > Sitemaps > In Sitemap = No. Filtrar Indexability = Indexable + Status 200.',
+            'Bajo', 'Medio', 'Bajo', 'SEO + CMS',
+            'Re-crawl: todas las URLs indexables aparecen en el sitemap. '
+            'GSC > Sitemaps: aumento en el recuento de URLs enviadas.',
+            sample_urls(df_missing_from_sitemap, sort_by='inlinks' if HAS_INLINKS_DATA else 'url')
+        )
+
+    # T23 — Tiempo de respuesta lento >3 s (P1)
+    n_slow = len(df_slow)
+    if HAS_RESPONSE_TIME and n_slow > 0:
+        avg_slow = round(df_slow['response_time'].mean(), 2) if 'response_time' in df_slow.columns else 0
+        top_slow_url = df_slow.sort_values('response_time', ascending=False).iloc[0]['url'] if n_slow > 0 else ''
+        top_slow_time = round(df_slow['response_time'].max(), 2) if n_slow > 0 else 0
+        add_task(
+            'T23', 'P1', 'Técnico / Velocidad',
+            f'Optimizar tiempo de respuesta en {n_slow:,} páginas lentas (>{T_SLOW_RESPONSE}s)',
+            f'{n_slow:,} páginas indexables superan los {T_SLOW_RESPONSE}s de TTFB durante el crawl. '
+            f'Media: {avg_slow}s. Máximo: {top_slow_time}s. Impacta Core Web Vitals y crawl budget.',
+            f'{n_slow:,} páginas con response_time >{T_SLOW_RESPONSE}s en SF. '
+            f'Tiempo medio de las afectadas: {avg_slow}s. '
+            f'URL más lenta: {top_slow_url} ({top_slow_time}s). '
+            'Googlebot reduce la frecuencia de rastreo en sitios con TTFB elevado; '
+            'además, un TTFB alto es el principal factor del LCP.',
+            'Consultas de base de datos sin índices. '
+            'Plugins pesados o conflictos de caché. '
+            'Hosting infradimensionado. '
+            'Procesos de terceros bloqueantes en server-side.',
+            f'1. Priorizar las URLs con más tráfico GSC de este listado. '
+            '2. Medir TTFB real en PageSpeed Insights y WebPageTest. '
+            '3. Activar/corregir caché de página (full-page caching). '
+            '4. Revisar queries lentas con herramientas de profiling (Query Monitor, New Relic). '
+            '5. Evaluar upgrade de hosting o activar CDN con edge caching.',
+            f'SF > All URLs > Columna Response Time > ordenar desc. '
+            'Filtrar Content Type = text/html + Status = 200 + Indexability = Indexable.',
+            'Bajo', 'Alto', 'Medio', 'Dev + Hosting',
+            f'Re-crawl: 0 URLs indexables con response_time >{T_SLOW_RESPONSE}s. '
+            'PageSpeed Insights: TTFB <800ms en las URLs objetivo.',
+            sample_urls(df_slow.sort_values('response_time', ascending=False))
+        )
+
+    # T24 — URLs con parámetros indexables (P2)
+    n_parametered = len(df_parametered)
+    if n_parametered > 0:
+        add_task(
+            'T24', 'P2', 'URL / Parámetros indexables',
+            f'Revisar {n_parametered:,} URLs con parámetros (?) indexadas por Google',
+            f'{n_parametered:,} páginas indexables contienen "?" en la URL. '
+            'Pueden generar contenido duplicado y desperdiciar crawl budget.',
+            f'{n_parametered:,} URLs indexables con al menos un parámetro en la query string. '
+            'Google puede tratar cada combinación de parámetros como una URL única, '
+            'multiplicando el contenido duplicado y diluyendo la autoridad de las páginas canónicas.',
+            'Filtros de tienda/catálogo sin canonical o noindex. '
+            'Tracking UTMs en URLs indexables. '
+            'Sistema de sesiones o caches con parámetros no filtrados.',
+            '1. Clasificar los parámetros: tracking (UTM→ GSC > Parámetros de URL o canonical). '
+            '2. Para parámetros de filtro/orden: añadir canonical a la URL sin parámetros. '
+            '3. Para parámetros que cambian contenido: evaluar noindex o consolidar con pagination. '
+            '4. Configurar GSC > Parámetros de URL para indicar a Google cuáles ignorar.',
+            'SF > All URLs > filtrar URL contains "?". Confirmar Indexability = Indexable.',
+            'Bajo', 'Medio', 'Bajo', 'SEO + Dev',
+            'Re-crawl: las URLs con parámetros tienen canonical correcta o noindex. '
+            'GSC Cobertura: reducción de URLs indexadas con parámetros.',
+            sample_urls(df_parametered, sort_by='impressions' if HAS_GSC else 'url')
+        )
+
+    # T25 — URLs largas >115 caracteres (P2)
+    n_long_urls = len(df_long_urls)
+    if n_long_urls > 0:
+        max_url_len = df_long_urls['url'].str.len().max()
+        add_task(
+            'T25', 'P2', 'URL / Estructura',
+            f'Acortar {n_long_urls:,} URLs indexables con más de {T_URL_MAX_LEN} caracteres',
+            f'{n_long_urls:,} URLs indexables superan los {T_URL_MAX_LEN} caracteres. '
+            f'URL más larga: {max_url_len} caracteres. '
+            'URLs largas tienen menor CTR y son más difíciles de compartir.',
+            f'{n_long_urls:,} URLs con len(url) > {T_URL_MAX_LEN} chars en SF. '
+            f'La URL más larga tiene {max_url_len} caracteres. '
+            'Google muestra como máximo ~70 chars del slug en el snippet; '
+            'las URLs largas se truncan y reducen la legibilidad del resultado.',
+            'Slugs generados automáticamente desde títulos largos. '
+            'Jerarquías de categorías muy anidadas (/cat1/cat2/cat3/producto). '
+            'Parámetros incluidos en el slug.',
+            '1. Identificar patrones de URL largas (productos, posts, categorías anidadas). '
+            '2. Definir convención de slug: máximo 5 palabras clave, sin stop words. '
+            '3. Acortar las URLs más visitadas y añadir 301 desde la URL antigua. '
+            '4. Actualizar el CMS para generar slugs cortos por defecto.',
+            f'SF > All URLs > añadir columna URL Length > filtrar > {T_URL_MAX_LEN} chars.',
+            'Medio', 'Bajo', 'Bajo', 'SEO + CMS',
+            f'Re-crawl: porcentaje de URLs >{T_URL_MAX_LEN} chars se reduce en ≥50%. '
+            'CTR medio mejora en las URLs acortadas (monitorizar en GSC).',
+            sample_urls(df_long_urls.assign(_len=df_long_urls['url'].str.len()).sort_values('_len', ascending=False).drop(columns=['_len']))
+        )
+
+    # T26 — Titles duplicados (P1)
+    n_dup_titles = len(df_dup_titles)
+    if HAS_TITLE_1 and n_dup_titles > 0:
+        add_task(
+            'T26', 'P1', 'Metadatos / Titles duplicados',
+            f'Diversificar {n_dup_titles:,} páginas con title tag duplicado '
+            f'({n_unique_dup_titles:,} títulos compartidos por varias URLs)',
+            f'{n_dup_titles:,} páginas indexables comparten title tag con al menos otra URL. '
+            'Google no puede diferenciar el contenido de cada página y puede mergear señales.',
+            f'{n_dup_titles:,} páginas indexables tienen un title_1 idéntico a otra URL del sitio. '
+            f'Hay {n_unique_dup_titles:,} títulos distintos afectados. '
+            'Los titles duplicados dificultan que Google entienda qué página rankear para cada query; '
+            'puede elegir la "equivocada" o reescribir el título automáticamente.',
+            'Plantillas de CMS generando el mismo title para múltiples páginas. '
+            'Páginas de paginación con el mismo title que la página /1. '
+            'Productos de la misma categoría sin diferenciador en el title.',
+            '1. Exportar el listado y agrupar por title duplicado para identificar patrones. '
+            '2. Para páginas de listing/categoría: añadir el número de página al title (ej. "- Página 2"). '
+            '3. Para productos: incluir SKU, talla o color. '
+            '4. Actualizar la plantilla del CMS para generar títulos únicos automáticamente.',
+            'SF > Page Titles > Duplicate + Missing. Filtrar Indexability = Indexable.',
+            'Bajo', 'Alto', 'Bajo', 'SEO + CMS',
+            'Re-crawl: 0 titles duplicados en páginas indexables. '
+            'GSC: mejora en CTR de las páginas con título diferenciado.',
+            sample_urls(df_dup_titles, sort_by='impressions' if HAS_GSC else 'url')
+        )
+
+    # T27 — Páginas noindex con impresiones en GSC (P1, requiere GSC)
+    n_noindex_gsc = len(df_noindex_with_gsc)
+    if HAS_GSC and n_noindex_gsc > 0:
+        total_impr_noindex = int(df_noindex_with_gsc['impressions'].sum())
+        top_noindex_url   = df_noindex_with_gsc.nlargest(1, 'impressions').iloc[0]['url']
+        top_noindex_impr  = int(df_noindex_with_gsc['impressions'].max())
+        add_task(
+            'T27', 'P1', 'Indexación / GSC vs noindex',
+            f'Revisar {n_noindex_gsc:,} páginas bloqueadas a la indexación que tienen '
+            f'impresiones en GSC ({total_impr_noindex:,} impresiones en total)',
+            f'{n_noindex_gsc:,} URLs están marcadas como no-indexables en SF pero '
+            f'aún generan {total_impr_noindex:,} impresiones en Google. '
+            'Señal de conflicto entre directivas on-page y el índice real de Google.',
+            f'{n_noindex_gsc:,} URLs con indexability ≠ Indexable y impressions GSC > 0. '
+            f'Total impresiones perdidas: {total_impr_noindex:,}. '
+            f'URL con más impresiones: {top_noindex_url} ({top_noindex_impr:,} impr.). '
+            'Esto indica que Google tenía estas URLs indexadas antes de añadir el noindex, '
+            'o que el noindex se ha aplicado por error.',
+            'Noindex añadido por error (ej. staging copiado a producción). '
+            'Cambio de estrategia de indexación sin revisar el impacto en tráfico activo. '
+            'Canonical a otra URL en páginas que sí deben indexar.',
+            '1. Para cada URL: decidir si el noindex es intencionado o un error. '
+            '2. Si es error: eliminar el noindex/canonical y monitorizar re-indexación en GSC. '
+            '3. Si es intencionado: redirigir el tráfico residual a una URL equivalente indexable. '
+            '4. Revisar el proceso de QA para evitar noindex en producción.',
+            'SF > Indexability > Non-Indexable. Cruzar con GSC > Rendimiento. '
+            'Filtrar páginas con impressions > 0.',
+            'Bajo', 'Alto', 'Bajo', 'SEO',
+            'Re-crawl: las URLs con tráfico GSC son Indexable. '
+            'GSC Cobertura: reducción de "Excluida - noindex" en URLs con impresiones.',
+            sample_urls(df_noindex_with_gsc.sort_values('impressions', ascending=False))
+        )
+
+    # T28 — Titles largos >60 chars (P2)
+    n_long_titles = len(df_long_titles)
+    if HAS_TITLE_LEN and n_long_titles > 0:
+        avg_title_len = round(df_long_titles['title_1_length'].mean(), 0) if 'title_1_length' in df_long_titles.columns else 0
+        add_task(
+            'T28', 'P2', 'Metadatos / Title largo',
+            f'Acortar title tag en {n_long_titles:,} páginas indexables (>{60} caracteres)',
+            f'{n_long_titles:,} páginas tienen un title de más de 60 caracteres '
+            f'(media: {avg_title_len:.0f} chars). Google trunca a ~60 chars y puede reescribir el título.',
+            f'{n_long_titles:,} URLs indexables con title_1_length > 60. '
+            f'Media de longitud en las afectadas: {avg_title_len:.0f} caracteres. '
+            'Google trunca el title en el snippet a ~600 px (≈60 chars); '
+            'un title truncado pierde la keyword final y puede bajar el CTR.',
+            'Plantillas de CMS usando nombre completo del producto/post sin límite de caracteres. '
+            'Textos de title generados manualmente sin revisión de longitud. '
+            'Titles con boilerplate al final (ej. "| Nombre de la tienda | Categoría").',
+            '1. Exportar el listado y priorizar las páginas con más impresiones. '
+            '2. Reescribir el title para que la keyword principal aparezca en los primeros 60 chars. '
+            '3. Eliminar boilerplate superfluo o moverlo al inicio si es relevante. '
+            '4. Configurar la plantilla del CMS para avisar cuando el title supere 60 chars.',
+            'SF > Page Titles > Over 60 Characters (o columna Title 1 Length > 60).',
+            'Bajo', 'Medio', 'Bajo', 'SEO',
+            'Re-crawl: todas las páginas indexables tienen title_1_length ≤ 60. '
+            'GSC: mejora de CTR en las URLs corregidas.',
+            sample_urls(df_long_titles.sort_values('title_1_length', ascending=False) if 'title_1_length' in df_long_titles.columns else df_long_titles)
+        )
+
+    # T29 — Canonical ausente en páginas 200 indexables (P2)
+    n_no_canonical = len(df_no_canonical)
+    if HAS_CANONICAL_COL and n_no_canonical > 0:
+        add_task(
+            'T29', 'P2', 'Canonicals / Ausente',
+            f'Añadir canonical self-referencing en {n_no_canonical:,} páginas indexables sin canonical',
+            f'{n_no_canonical:,} páginas con status 200 e indexabilidad "Indexable" '
+            'no tienen etiqueta canonical. Sin canonical, URLs con parámetros o variantes '
+            'pueden generar duplicados no controlados.',
+            f'{n_no_canonical:,} URLs con status 200, Indexable y canonical_link_element_1 vacío en SF. '
+            'La ausencia de canonical self-referencing permite que variaciones de la URL '
+            '(con parámetros de tracking, sesión, UTM…) sean tratadas como URLs independientes '
+            'por Googlebot, diluyendo señales de PageRank.',
+            'CMS sin implementación de canonical por defecto. '
+            'Páginas creadas manualmente fuera del flujo habitual del CMS. '
+            'Actualizaciones del CMS que borraron la lógica de canonical.',
+            '1. Verificar si el CMS implementa canonical de forma global. '
+            '2. Si no: añadir <link rel="canonical" href="{url_actual}"> en el <head> de todas las páginas. '
+            '3. Para WordPress/Shopify: activar canonical en el plugin SEO (Yoast, Rank Math, etc.). '
+            '4. Re-crawl para confirmar que canonical_link_element_1 = url en todas las páginas.',
+            'SF > Canonicals > Missing. Filtrar Status 200 + Indexability = Indexable.',
+            'Bajo', 'Medio', 'Bajo', 'Dev + SEO',
+            'Re-crawl: 0 páginas indexables sin canonical. '
+            'GSC Cobertura: reducción de variantes de URL duplicadas.',
+            sample_urls(df_no_canonical, sort_by='impressions' if HAS_GSC else 'url')
+        )
+
+    # T30 — Sin H2 en páginas SEO indexables (P2)
+    n_no_h2 = len(df_no_h2)
+    if HAS_H2_COL and n_no_h2 > 0:
+        add_task(
+            'T30', 'P2', 'Contenido / Estructura H2',
+            f'Añadir H2 a {n_no_h2:,} páginas SEO indexables sin subtítulos',
+            f'{n_no_h2:,} páginas de tipo SEO (colecciones, productos, posts) '
+            'carecen de etiqueta H2. La ausencia de subtítulos dificulta la comprensión '
+            'del contenido por parte de Google.',
+            f'{n_no_h2:,} URLs de tipo SEO con h2_1 vacío en SF. '
+            'Google usa los H2 para entender la estructura temática de la página '
+            'y para generar featured snippets. Sin H2, el contenido es menos escaneable '
+            'tanto para usuarios como para bots.',
+            'Plantillas de CMS que no incluyen H2 por defecto. '
+            'Contenido migrado sin revisar la estructura de headings. '
+            'Páginas con contenido mínimo en las que no se añadieron subtítulos.',
+            '1. Identificar qué tipos de página afectan más (productos, posts, categorías). '
+            '2. Actualizar las plantillas para incluir al menos un H2 con keyword secundaria. '
+            '3. Para páginas de alto tráfico: revisar manualmente y redactar subtítulos relevantes. '
+            '4. Verificar en re-crawl que h2_1 ya no está vacío.',
+            'SF > Headings > H2 Missing or Empty. Filtrar url_type = SEO_TYPES.',
+            'Bajo', 'Medio', 'Bajo', 'SEO + CMS',
+            'Re-crawl: 0 páginas SEO sin H2. '
+            'GSC: mejora en featured snippets y posición media en las URLs corregidas.',
+            sample_urls(df_no_h2, sort_by='impressions' if HAS_GSC else 'url')
+        )
+
+    # T31 — Title = H1 exacto (P2)
+    n_title_eq_h1 = len(df_title_eq_h1)
+    if HAS_TITLE_1 and HAS_H1_COL and n_title_eq_h1 > 0:
+        add_task(
+            'T31', 'P2', 'Metadatos / Title = H1 duplicado',
+            f'Diferenciar title tag y H1 en {n_title_eq_h1:,} páginas con texto idéntico',
+            f'{n_title_eq_h1:,} páginas tienen el title tag y el H1 con exactamente el mismo texto. '
+            'Es una oportunidad perdida: el title puede optimizarse para CTR '
+            'y el H1 para la relevancia temática en página.',
+            f'{n_title_eq_h1:,} URLs donde title_1 == h1_1 (comparación sin case, sin spaces). '
+            'El title se muestra en el SERP y debe maximizar el CTR; el H1 es el heading '
+            'principal de la página y debe contextualizar el contenido para el usuario. '
+            'Usarlos idénticos no es un error técnico, pero limita la optimización semántica.',
+            'Plantillas de CMS que auto-generan el H1 desde el title o viceversa. '
+            'Falta de revisión editorial al crear nuevas páginas.',
+            '1. Para cada página: redactar el title orientado al CTR en SERP '
+            '(incluir número, año, benefit o diferenciador). '
+            '2. Mantener el H1 más descriptivo y conversacional para el usuario en página. '
+            '3. Ambos deben contener la keyword principal, pero con variación de redacción.',
+            'SF > Page Titles > comparar con H1 Headings manualmente o exportar y cruzar en Excel.',
+            'Bajo', 'Bajo', 'Bajo', 'SEO',
+            'Re-crawl: las páginas corregidas tienen title ≠ H1. '
+            'GSC: mejora de CTR en las URLs modificadas.',
+            sample_urls(df_title_eq_h1, sort_by='impressions' if HAS_GSC else 'url')
+        )
+
+    # T32 — Crawl depth alto >4 con tráfico GSC (P2)
+    n_deep = len(df_deep)
+    if HAS_DEPTH_COL and n_deep > 0:
+        avg_depth = round(df_deep['depth'].mean(), 1) if 'depth' in df_deep.columns else 0
+        add_task(
+            'T32', 'P2', 'Arquitectura / Crawl Depth',
+            f'Reducir profundidad de rastreo en {n_deep:,} URLs importantes (>{T_MAX_DEPTH} clicks)',
+            f'{n_deep:,} páginas indexables con señal SEO están a más de {T_MAX_DEPTH} clicks '
+            f'de la home (media: {avg_depth} clicks). Googlebot les asigna menor prioridad de rastreo.',
+            f'{n_deep:,} URLs con depth > {T_MAX_DEPTH} y señal SEO (impressions > 0 o url_type = SEO_TYPES). '
+            f'Profundidad media de las afectadas: {avg_depth} clicks. '
+            'Las páginas a más de 4 clicks de la home reciben menos PageRank '
+            'y menos frecuencia de rastreo. Regla general: ninguna página importante '
+            'debería estar a más de 3-4 clicks.',
+            'Arquitectura de categorías muy anidada. '
+            'Paginaciones profundas o filtros generando rutas largas. '
+            'Enlazado interno insuficiente que no acorta el camino desde la home.',
+            '1. Exportar el listado y priorizar por impresiones GSC. '
+            '2. Para las URLs más importantes: añadir enlace directo desde la home, '
+            'categorías principales o el menú de navegación. '
+            '3. Revisar si la estructura de carpetas/categorías puede aplanarse. '
+            '4. Añadir las URLs más profundas al sitemap (ya incluidas si T22 se ejecutó).',
+            f'SF > All URLs > columna Crawl Depth > filtrar > {T_MAX_DEPTH}. '
+            'Cruzar con GSC Rendimiento para priorizar las más vistas.',
+            'Bajo', 'Medio', 'Medio', 'SEO + Dev',
+            f'Re-crawl: reducción ≥30% de URLs con depth > {T_MAX_DEPTH}. '
+            'GSC: mejora de frecuencia de rastreo en las URLs corregidas.',
+            sample_urls(df_deep.sort_values('impressions', ascending=False) if HAS_GSC and 'impressions' in df_deep.columns else df_deep)
         )
 
     print(f"  Total tareas: {len(tasks)}")
