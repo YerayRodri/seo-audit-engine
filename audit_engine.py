@@ -94,10 +94,12 @@ def run_audit(cfg, ruta_csv, output_path):
 
 
 
-    import profiler_csv   # noqa: E402  (same directory)
-
-    print("\nProfiling CSV...")
-    pf = profiler_csv.profile(RUTA_CSV, emit_json=False)
+    try:
+        import profiler_csv   # noqa: E402  (same directory, dev only)
+        print("\nProfiling CSV...")
+        pf = profiler_csv.profile(RUTA_CSV, emit_json=False)
+    except ModuleNotFoundError:
+        pf = {'rename': {}, 'decimal_comma': False}
 
     RENAME       = pf['rename']
     DECIMAL_COMMA = pf['decimal_comma']
