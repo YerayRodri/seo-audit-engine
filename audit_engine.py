@@ -202,7 +202,8 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             print(f"  All Links CSV columnas detectadas: {list(_links_raw.columns[:8])}")
             # Nombres en inglés Y español (SF exporta según idioma de la app)
             _lsrc = next((c for c in _links_raw.columns if c in (
-                'source', 'source_url', 'from', 'from_url', 'origen', 'url_origen', 'desde')), None)
+                'source', 'source_url', 'from', 'from_url',
+                'fuente', 'origen', 'url_origen', 'desde')), None)
             _ldst = next((c for c in _links_raw.columns if c in (
                 'destination', 'destination_url', 'to', 'to_url', 'href',
                 'destino', 'url_destino', 'hasta')), None)
