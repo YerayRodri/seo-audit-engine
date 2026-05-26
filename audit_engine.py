@@ -2165,6 +2165,8 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             _urls_4xx = set(df_4xx['url'].str.rstrip('/').tolist())
             _links_404 = _df_links[_df_links['link_dest'].isin(_urls_4xx)].copy()
             print(f"  T03 matching: {len(_urls_4xx)} URLs 4xx vs {len(_df_links)} enlaces → {len(_links_404)} matches")
+            print(f"  T03 muestra 4xx: {list(_urls_4xx)[:3]}")
+            print(f"  T03 muestra link_dest: {_df_links['link_dest'].iloc[:3].tolist()}")
             if len(_links_404) > 0:
                 _gsc_cols_4xx = [c for c in ['impressions', 'clicks', 'position'] if c in df_4xx.columns]
                 _4xx_meta = df_4xx[['url'] + _gsc_cols_4xx].rename(columns={'url': 'link_dest'})
