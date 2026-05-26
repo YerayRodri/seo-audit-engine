@@ -16,10 +16,10 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 
 ## Archivos del proyecto
 
-| Archivo | Líneas | Responsabilidad |
+| Archivo | Líneas aprox. | Responsabilidad |
 |---|---|---|
-| `app.py` | ~1089 | UI Streamlit: formulario, CSS, dashboard, tabs |
-| `audit_engine.py` | ~2227 | Motor de análisis: T01–T32, output Excel |
+| `app.py` | ~1220 | UI Streamlit: formulario, CSS, dashboard, 4 tabs |
+| `audit_engine.py` | ~2850 | Motor de análisis: T01–T48, output Excel, detail_dfs |
 | `requirements.txt` | — | Dependencias |
 | `config_newcop.py` | — | Config de cliente de ejemplo |
 | `knowledge/` | — | Checklists, guías, reglas de priorización |
@@ -33,11 +33,11 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 ## Flujo de la herramienta
 
 1. Usuario sube CSV de Screaming Frog (Internal All) — obligatorio
-2. Usuario sube ZIPs de GSC (páginas, consultas, query×page) — opcionales
+2. Usuario sube All Links CSV de SF (Bulk Export → All Links) — opcional, enriquece T03/T04
 3. Se auto-detecta plataforma (Shopify / WooCommerce / WordPress / Generic) y locales
-4. `run_audit(cfg, ruta_csv, output_path)` ejecuta los 48 checks (T01–T48)
+4. `run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None)` ejecuta los 48 checks (T01–T48)
 5. Genera Excel de 4 hojas: Resumen, Tareas, URLs-Prioridad, Oportunidades GSC
-6. Dashboard visual con Health Score + KPIs
+6. Dashboard visual con Health Score + KPIs + pestaña Plan de Tareas con Excel por tarea
 
 ---
 
@@ -47,10 +47,13 @@ Dos funciones públicas en [audit_engine.py](audit_engine.py):
 
 ```python
 def load_config(config_path): ...   # línea 32 — carga config de cliente
-def run_audit(cfg, ruta_csv, output_path): ...  # línea 43 — ejecuta T01–T48, escribe Excel
+def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None): ...  # línea 43 — ejecuta T01–T48
 ```
 
-`run_audit` retorna `dict` con claves: `tasks`, `urls`, `gsc`, `resumen`, `output_path`
+`run_audit` retorna `dict` con claves:
+- `tasks`, `urls`, `gsc`, `resumen`, `output_path`
+- `dashboard` — dict con todos los KPIs y `tasks_list` (lista con todos los campos de cada tarea)
+- `detail_dfs` — dict `{task_id: DataFrame}` con URLs afectadas por tarea (para Excel descargables)
 
 ### Checks T01–T48
 
@@ -92,24 +95,74 @@ La columna SF `Indexability` se normaliza internamente como **`indexable`**:
 - Correcto: `df['indexable']`
 - Incorrecto: `df['indexability']` → KeyError
 
-La columna SF `Structured Data` se normaliza como **`structured_data`** (añadida en SF_COL_MAP).
+SF_COL_MAP completo (~línea 119 de audit_engine.py):
+
+| SF column | Nombre interno |
+|---|---|
+| `Address` | `url` |
+| `Status Code` | `status` |
+| `Indexability` | `indexable` |
+| `Title 1` | `title` |
+| `Title 1 Length` | `title_len` |
+| `Meta Description 1` | `meta_desc` |
+| `Meta Description 1 Length` | `meta_desc_len` |
+| `H1-1` | `h1` |
+| `H2-1` | `h2` |
+| `Canonical Link Element 1` | `canonical` |
+| `Meta Robots 1` | `meta_robots` |
+| `Crawl Depth` | `depth` |
+| `Inlinks` | `inlinks` |
+| `Is In Sitemap` | `in_sitemap` |
+| `Content Type` | `content_type` |
+| `Word Count` | `word_count` |
+| `Size (bytes)` | `size` |
+| `Response Time` | `response_time` |
+| `Indexability Status` | `indexability_status` |
+| `Structured Data` | `structured_data` |
+| `Redirect URL` | `redirect_url` |
 
 La columna `H1-1` se normaliza como `h1` vía SF_COL_MAP, pero `profiler_csv` puede renombrarla como `h1_1`. Los checks T33/T34 usan `_h1_col` que detecta ambas automáticamente.
 
-El mapa completo está en `SF_COL_MAP` dentro de [audit_engine.py](audit_engine.py) (~línea 119).
-
-### Flags de disponibilidad de columnas (al inicio de los pre-cómputos)
+### Flags de disponibilidad de columnas
 
 ```python
 HAS_SITEMAP_DATA   # 'in_sitemap' in df.columns
 HAS_RESPONSE_TIME  # 'response_time' in df.columns
 HAS_INLINKS_DATA   # 'inlinks' in df.columns and sum > 0
 HAS_GSC            # columnas GSC presentes y con datos
-HAS_SD_COL         # 'structured_data' in df.columns  ← NUEVO
-IS_SHOPIFY         # PLATFORM == 'Shopify'             ← NUEVO
+HAS_SD_COL         # 'structured_data' in df.columns
+IS_SHOPIFY         # PLATFORM == 'Shopify'
+HAS_LINKS          # All Links CSV cargado correctamente
 ```
 
 Todos los checks comprueban su flag antes de ejecutarse — si la columna no existe, el check no genera tarea (sin errores, sin falsos positivos).
+
+### detail_dfs — DataFrames por tarea
+
+Tras ejecutar todos los checks se construye `detail_dfs = {task_id: DataFrame}`.  
+Columnas base de cada DataFrame (`_DETAIL_OPT`):
+
+```python
+['status', 'indexable', 'indexability_status',
+ 'title', 'title_len', 'meta_desc', 'meta_desc_len',
+ 'h1', 'h2', 'canonical', 'meta_robots', 'word_count', 'structured_data',
+ 'inlinks', 'depth', 'redirect_url', 'response_time',
+ 'impressions', 'clicks', 'ctr', 'position']
+```
+
+Solo se incluyen las columnas que existen en el DataFrame fuente.
+
+**Post-procesado de duplicados** (aplicado antes de guardar en detail_dfs):
+- `T26` (dup titles): columna `grupo_dup_title` — todas las URLs con el mismo título juntas
+- `T35` (dup meta): columna `grupo_dup_meta`
+- `T33` (dup H1 productos): columna `grupo_dup_h1`
+- `T34` (dup H1 colecciones): columna `grupo_dup_h1`
+
+**Enriquecimiento con All Links CSV** (cuando `ruta_links_csv` se pasa a `run_audit`):
+- `T03` (404s): una fila por enlace entrante → columnas `url_404`, `pagina_origen`, `texto_ancla`, `es_imagen`, `texto_alt` + GSC si disponible
+- `T04` (301s): una fila por enlace entrante → columnas `url_redirect`, `redirige_a`, `pagina_origen`, `texto_ancla`, `es_imagen`, `texto_alt`
+
+El All Links CSV se exporta desde SF → Bulk Export → All Links. Parsing flexible (detecta `Source`/`Destination`/`Anchor`/`Alt Text`/`Type`/`Tag` con varias variantes de nombre).
 
 ---
 
@@ -117,20 +170,42 @@ Todos los checks comprueban su flag antes de ejecutarse — si la columna no exi
 
 Funciones relevantes en [app.py](app.py):
 
-- `detect_locales_from_csv(file_bytes)` — línea 125
-- `detect_platform_from_csv(file_bytes)` — línea 153
+- `detect_locales_from_csv(file_bytes)` — ~línea 125
+- `detect_platform_from_csv(file_bytes)` — ~línea 153
 
-### Estructura de la UI (por líneas)
+### Estructura de la UI
 
 ```
-Línea ~21    — PRESETS por plataforma (Shopify, WooCommerce, WordPress, Generic)
-Línea ~256   — CSS personalizado (Inter font, .kpi-card, .seo-hero, expanders)
-Línea ~536   — Hero header HTML
-Línea ~547   — Formulario: columna izquierda (uploads) / derecha (config)
-Línea ~641   — Botón "Generar Auditoría" + llamada a run_audit()
-Línea ~709   — Tabs de resultado: tab_dl / tab_log / tab_dash
-Línea ~726   — Dashboard: Health Score, KPI cards, inventario, on-page, técnico, GSC, plan
+~Línea 21    — PRESETS por plataforma (Shopify, WooCommerce, WordPress, Generic)
+~Línea 256   — CSS personalizado (Inter font, .kpi-card, .seo-hero, expanders)
+~Línea 536   — Hero header HTML
+~Línea 547   — Sección 1: upload Internal All CSV
+~Línea 584   — Sección 1b: upload All Links CSV (opcional)
+~Línea 598   — Sección 2: datos del cliente (dominio, plataforma)
+~Línea 615   — Sección 3: internacionalización
+~Línea 646   — Sección 4: configuración avanzada
+~Línea 726   — Botón "Generar Auditoría" + llamada a run_audit()
+~Línea 810   — Tabs de resultado:
+               tab_dash   — Dashboard SEO
+               tab_tasks  — Plan de Tareas (expanders + Excel por tarea)
+               tab_dl     — Descargar Excel completo
+               tab_log    — Log de ejecución
+~Línea 836   — Dashboard: Health Score, KPIs, inventario, on-page, técnico, GSC
+~Línea 1066  — Resumen Plan de Acción (4 contadores P0/P1/P2/P3)
+~Línea 1089  — TAB Plan de Tareas: expanders + _make_task_excel()
 ```
+
+### Tab Plan de Tareas
+
+Cada tarea se muestra en un `st.expander` con:
+- Columna izquierda: categoría, descripción, causa, qué hacer, dónde detectarlo
+- Columna derecha: esfuerzo, impacto, riesgo, responsable
+- Evidencia y URLs de ejemplo en `st.code`
+- Botón "⬇️ Descargar Excel — TXX" si la tarea tiene DataFrame en `detail_dfs`
+
+El Excel generado (`_make_task_excel`) tiene dos hojas:
+1. **"URLs afectadas"** — DataFrame completo con todas las columnas relevantes
+2. **"Ficha tarea"** — campos: ID, Prioridad, Categoría, Tarea, Descripción, Causa, Qué hacer, Dónde, Esfuerzo, Impacto, Riesgo, Responsable, Validación, Evidencia
 
 ### Helper `_tc_card(label, value, warn=False, na=False)`
 
@@ -183,13 +258,15 @@ input, textarea, select, button { font-family: inherit !important; }
 | `overflow:hidden` rompe expanders | Colapsa flex layout interno | Eliminar overflow:hidden del contenedor |
 | `KeyError: indexability` | Nombre normalizado distinto | Siempre usar `df['indexable']` |
 | `NameError: pd` en app.py | Faltaba import | `import pandas as pd` ya añadido |
+| `KeyError: 'impressions'` en T03 | `nlargest('impressions')` sin guard GSC | Guard `_404_has_gsc` antes de nlargest |
 
 ### Posibles fallos en los nuevos checks (T33–T48)
 
 - **T33/T34 — H1 duplicados**: si tanto `h1` como `h1_1` están en el df, `_h1_col` usa `h1_1`. Si ninguno existe, el check no se ejecuta silenciosamente.
-- **T37–T41 — Shopify**: solo se ejecutan si `PLATFORM == 'Shopify'`. Si la auto-detección de plataforma falla, estos checks no aparecen aunque el site sea Shopify. Verificar con `detect_platform_from_csv()` en `app.py`.
-- **T42–T48 — Structured Data**: SF no exporta la columna `Structured Data` en todos los modos de crawl. Si el CSV no la trae, todos los checks SD son silenciosos. Para habilitarla: SF → Configuration → Spider → Extraction → Structured Data → activar.
-- **T39 — Scoped products**: el regex `/collections/[^/?#]+/products/` puede producir falsos positivos si la URL tiene ese patrón por otro motivo. Revisar si aparecen URLs inesperadas.
+- **T37–T41 — Shopify**: solo se ejecutan si `PLATFORM == 'Shopify'`. Si la auto-detección de plataforma falla, estos checks no aparecen aunque el site sea Shopify.
+- **T42–T48 — Structured Data**: SF no exporta la columna `Structured Data` en todos los modos de crawl. Para habilitarla: SF → Configuration → Spider → Extraction → Structured Data → activar.
+- **T39 — Scoped products**: el regex `/collections/[^/?#]+/products/` puede producir falsos positivos. Revisar si aparecen URLs inesperadas.
+- **All Links CSV — T03/T04**: si SF exporta el All Links con nombres de columna distintos a `Source`/`Destination`/`Anchor`/`Alt Text`/`Type`, el parser flexible intenta detectarlos pero puede fallar silenciosamente (HAS_LINKS queda False, se usa fallback sin origen).
 
 ---
 
@@ -208,32 +285,37 @@ Para entender el formato de salida del Excel ver [DEVELOPMENT_LOG.md](DEVELOPMEN
 
 ## Pendiente de implementar (diseñado, no codificado)
 
-### Bloque 4 — Nofollow (requiere nuevo upload: All Links CSV)
-Añadir un tercer upload opcional en `app.py` para el export "All Links" de SF.
+### Bloque 4 — Nofollow (All Links CSV ya disponible en el upload)
+
+El upload de All Links CSV ya existe en `app.py` (~línea 584). Usar `_df_links` en audit_engine para estos checks:
 
 | ID | Check | Lógica |
 |---|---|---|
-| T49 | Links de paginación sin nofollow | `?page=` / `/page/X` con `follow=true` |
+| T49 | Links de paginación sin nofollow | `?page=` / `/page/X` con `follow=true` en `_df_links` |
 | T50 | Links de ordenación/filtros sin nofollow | `?sort_by=`, `?filter.` con `follow=true` |
 | T51 | Links a carrito/checkout sin nofollow | `/cart`, `/checkout` con `follow=true` |
 | — | Links internos duplicados en misma página | misma URL origen→destino más de una vez |
 
 ### Bloque 5 — WordPress-específico (ninguno implementado aún)
+
 Misma metodología que los Shopify. Activar con `IS_WORDPRESS = (PLATFORM == 'WordPress')`.
 
 Checks habituales: páginas de autor indexables, archivos año/mes indexables, `/?p=XXXX` indexable, feeds indexables, páginas de adjuntos indexables, tags/categorías sin contenido.
 
 ### Bloque 6 — Checks desde columnas SF ya disponibles pero no usadas
-- **Cadenas de redirect**: columna `Redirect URL` ya en Internal All → construir grafo A→B→C
+
+- **Cadenas de redirect**: columna `redirect_url` ya en Internal All (ya en SF_COL_MAP) → construir grafo A→B→C
 - **Canonical chains/loops**: cruzar columna `canonical` consigo misma → detectar loops y cadenas
 
 ### Mejoras de arquitectura pendientes
+
 - Unificar archivos legacy (`audit_newcop.py`, `audit_newcop_v2.py`, `audit_step1.py`)
 - Mover `_tc_card()` a nivel de módulo en `app.py`
 - Tests unitarios para los checks T01–T48
 - Responsive: ajustar `st.columns([1.8, 1, 1, 1, 1])` en pantallas estrechas
 
 ### Ideas para más adelante (requieren integración externa)
+
 - Canibalización: query×page GSC → múltiples URLs compitiendo por misma keyword
 - Enriquecimiento con DataForSEO: dificultad de keyword y volumen por URL
 - Conexión directa GSC vía MCP en lugar de upload de ZIPs
