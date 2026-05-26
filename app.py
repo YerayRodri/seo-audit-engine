@@ -18,6 +18,9 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 from audit_engine import run_audit  # noqa: E402
 
+if 'audit_results' not in st.session_state:
+    st.session_state.audit_results = None
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PRESETS POR PLATAFORMA
 # ──────────────────────────────────────────────────────────────────────────────
@@ -819,10 +822,25 @@ if run_btn and uploaded_csv and domain:
                     st.code(traceback.format_exc())
                 st.stop()
 
-    # ── Resultados ────────────────────────────────────────────────────────────
-    st.success("✅ Auditoría completada")
-    dash = stats.get('dashboard', {})
-    fname = f"auditoria-seo-{domain.strip()}-{fecha}.xlsx"
+    # Guardar en session_state — los resultados persisten al hacer descargas
+    st.session_state.audit_results = {
+        'stats': stats, 'excel_bytes': excel_bytes,
+        'log_lines': log_lines, 'domain_name': domain.strip(), 'fecha': fecha,
+    }
+
+if st.session_state.get('audit_results'):
+    _r = st.session_state.audit_results
+    stats, excel_bytes = _r['stats'], _r['excel_bytes']
+    log_lines, _domain, _fecha = _r['log_lines'], _r['domain_name'], _r['fecha']
+    dash  = stats.get('dashboard', {})
+    fname = f"auditoria-seo-{_domain}-{_fecha}.xlsx"
+
+    _nc, _ = st.columns([1.6, 5])
+    with _nc:
+        if st.button("🔄 Nueva auditoría", key="btn_new_audit"):
+            st.session_state.audit_results = None
+            st.rerun()
+    st.success("✅ Auditoría completada — descarga sin perder los resultados")
 
     tab_dash, tab_tasks, tab_dl, tab_log = st.tabs(["📊 Dashboard SEO", "📋 Plan de Tareas", "⬇️ Descargar Excel", "🗒️ Log"])
 
@@ -1163,57 +1181,66 @@ if run_btn and uploaded_csv and domain:
                   </span>
                 </div>""", unsafe_allow_html=True)
 
+                def _pill(lbl, val):
+                    _cm = {
+                        'Alto':  ('#fef2f2', '#dc2626'), 'Medio': ('#fef9c3', '#b45309'),
+                        'Bajo':  ('#f0fdf4', '#15803d'), 'SEO':   ('#eff6ff', '#1d4ed8'),
+                        'Dev':   ('#faf5ff', '#7c3aed'), 'UX':    ('#fff7ed', '#c2410c'),
+                    }
+                    bg, txt = _cm.get(val, ('#f1f5f9', '#475569'))
+                    return (f'<span style="display:inline-block;background:{bg};color:{txt};'
+                            f'border:1px solid {txt}30;border-radius:20px;padding:3px 12px;'
+                            f'font-size:0.76rem;font-weight:600;margin:2px 0;white-space:nowrap">'
+                            f'{lbl}: {val}</span>')
+
                 for _t in _pt:
-                    _tid = _t['id']
+                    _tid    = _t['id']
                     _has_dl = _tid in _detail_dfs
-                    _exp_label = f"**[{_tid}]** {_t['task']}"
+                    _url_ct = len(_detail_dfs[_tid]) if _has_dl else 0
+                    _url_tag = f" · {_url_ct:,} URLs" if _has_dl else ""
+                    _exp_label = f"{_icon} **[{_tid}]** {_t['task']}{_url_tag}"
                     with st.expander(_exp_label, expanded=False):
-                        _c1, _c2 = st.columns([3, 1])
+                        _c1, _c2 = st.columns([3, 1.2])
                         with _c1:
-                            st.markdown(f"**Categoría:** {_t.get('category', '')}")
                             if _t.get('description'):
-                                st.markdown(f"**Descripción:** {_t.get('description', '')}")
+                                st.markdown(_t['description'])
                             if _t.get('cause'):
-                                st.markdown(f"**Causa probable:** {_t.get('cause', '')}")
+                                st.markdown(f"**Causa:** {_t['cause']}")
                             if _t.get('todo'):
-                                st.markdown(f"**Qué hacer:** {_t.get('todo', '')}")
+                                st.markdown(f"**Qué hacer:** {_t['todo']}")
                             if _t.get('where'):
-                                st.markdown(f"**Dónde detectarlo:** {_t.get('where', '')}")
+                                st.caption(f"🔍 {_t['where']}")
                         with _c2:
-                            _ef = _t.get('effort', '')
-                            _im = _t.get('impact', '')
-                            _ri = _t.get('risk', '')
-                            _re = _t.get('responsible', '')
-                            if _ef:
-                                st.markdown(f"**Esfuerzo:** {_ef}")
-                            if _im:
-                                st.markdown(f"**Impacto:** {_im}")
-                            if _ri:
-                                st.markdown(f"**Riesgo:** {_ri}")
-                            if _re:
-                                st.markdown(f"**Responsable:** {_re}")
+                            _badges = []
+                            for _lbl, _key in [("Esfuerzo", "effort"), ("Impacto", "impact"),
+                                               ("Riesgo", "risk"), ("Resp.", "responsible")]:
+                                _val = _t.get(_key, '')
+                                if _val:
+                                    _badges.append(_pill(_lbl, _val))
+                            if _badges:
+                                st.markdown("<br>".join(_badges), unsafe_allow_html=True)
 
                         if _t.get('validation'):
-                            st.markdown(f"**Validación:** {_t.get('validation', '')}")
-
+                            st.caption(f"✅ **Validación:** {_t['validation']}")
                         if _t.get('evidence'):
-                            st.markdown("**Evidencia:**")
                             st.code(_t['evidence'], language=None)
-
                         if _t.get('urls_sample'):
                             st.markdown("**URLs de ejemplo:**")
                             st.code(_t['urls_sample'], language=None)
 
                         if _has_dl:
-                            _df_dl = _detail_dfs[_tid]
-                            st.caption(f"📊 {len(_df_dl):,} URLs afectadas")
-                            _xls_bytes = _make_task_excel(_t, _df_dl)
-                            st.download_button(
-                                label=f"⬇️ Descargar Excel — {_tid}",
-                                data=_xls_bytes,
-                                file_name=f"tarea-{_tid}-{domain.strip()}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key=f"dl_{_tid}",
-                            )
+                            st.divider()
+                            _dl_c, _ct_c = st.columns([2.5, 1])
+                            with _dl_c:
+                                _xls_bytes = _make_task_excel(_t, _detail_dfs[_tid])
+                                st.download_button(
+                                    label=f"⬇️ Descargar Excel — {_tid}",
+                                    data=_xls_bytes,
+                                    file_name=f"tarea-{_tid}-{_domain}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key=f"dl_{_tid}",
+                                )
+                            with _ct_c:
+                                st.metric("URLs", f"{_url_ct:,}")
 
 st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by <a href="https://www.visibilidadon.com/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Visibilidad ON</a> &nbsp;·&nbsp; Hecho por <a href="https://yerayrodri.online/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Yeray Rodriguez</a></div>', unsafe_allow_html=True)
