@@ -136,6 +136,7 @@ def run_audit(cfg, ruta_csv, output_path):
         'Size (bytes)': 'size',
         'Response Time': 'response_time',
         'Indexability Status': 'indexability_status',
+        'Structured Data': 'structured_data',
     }
     sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
     if sf_rename:
@@ -636,6 +637,128 @@ def run_audit(cfg, ruta_csv, output_path):
 
     print(f"  Sin H2: {len(df_no_h2)} | Title=H1: {len(df_title_eq_h1)} | Depth>{T_MAX_DEPTH}: {len(df_deep)}")
 
+    # ── Pre-cómputos T33–T51 ──────────────────────────────────────────────────
+
+    # Columna H1 efectiva (profiler_csv → h1_1, SF_COL_MAP → h1)
+    _h1_col = 'h1_1' if 'h1_1' in df.columns else ('h1' if 'h1' in df.columns else None)
+
+    # T33 — H1 duplicado en fichas de producto
+    if _h1_col:
+        _df_prods_seo = df_indexable[df_indexable['url_type'] == 'product']
+        _h1_vals_prod = _df_prods_seo[_h1_col].dropna().astype(str).str.strip()
+        _h1_vals_prod = _h1_vals_prod[_h1_vals_prod != '']
+        _dup_h1_prod_mask = _h1_vals_prod.str.lower().duplicated(keep=False)
+        df_dup_h1_products = _df_prods_seo.loc[_h1_vals_prod[_dup_h1_prod_mask].index].copy()
+    else:
+        df_dup_h1_products = pd.DataFrame(columns=df.columns)
+
+    # T34 — H1 duplicado en colecciones/categorías
+    if _h1_col:
+        _coll_types = ['collection', 'collections_root', 'tag']
+        _df_colls_seo = df_indexable[df_indexable['url_type'].isin(_coll_types)]
+        _h1_vals_coll = _df_colls_seo[_h1_col].dropna().astype(str).str.strip()
+        _h1_vals_coll = _h1_vals_coll[_h1_vals_coll != '']
+        _dup_h1_coll_mask = _h1_vals_coll.str.lower().duplicated(keep=False)
+        df_dup_h1_colls = _df_colls_seo.loc[_h1_vals_coll[_dup_h1_coll_mask].index].copy()
+    else:
+        df_dup_h1_colls = pd.DataFrame(columns=df.columns)
+
+    # T35 — Meta descriptions duplicadas entre páginas SEO indexables
+    if 'meta_desc' in df.columns:
+        _meta_vals = df_seo['meta_desc'].dropna().astype(str).str.strip()
+        _meta_vals = _meta_vals[_meta_vals != '']
+        _dup_meta_mask = _meta_vals.str.lower().duplicated(keep=False)
+        df_dup_meta = df_seo.loc[_meta_vals[_dup_meta_mask].index].copy()
+        n_unique_dup_meta = int(df_seo.loc[_meta_vals[_dup_meta_mask].index, 'meta_desc'].nunique())
+    else:
+        df_dup_meta = pd.DataFrame(columns=df.columns)
+        n_unique_dup_meta = 0
+
+    # T36 — Links internos apuntando a páginas noindex (gasto de crawl budget)
+    if HAS_INLINKS_DATA and 'indexable' in df.columns:
+        df_noindex_linked = df_no_indexable[
+            (df_no_indexable['inlinks'] > 0) &
+            (df_no_indexable['status'] == 200)
+        ].copy()
+    else:
+        df_noindex_linked = pd.DataFrame(columns=df.columns)
+
+    # ── Pre-cómputos Shopify (T37–T41) ───────────────────────────────────────
+    IS_SHOPIFY = (PLATFORM == 'Shopify')
+
+    if IS_SHOPIFY:
+        df_collections_all = df_indexable[
+            df_indexable['url'].str.contains(r'/collections/all(\?|$|/)', case=False, na=False, regex=True)
+        ].copy()
+
+        df_system_collections = df_indexable[
+            df_indexable['url'].str.contains(
+                r'/collections/(vendors|types)(\?|$|/)', case=False, na=False, regex=True
+            )
+        ].copy()
+
+        df_scoped_products = df_indexable[
+            df_indexable['url'].str.contains(
+                r'/collections/[^/?#]+/products/', case=False, na=False, regex=True
+            )
+        ].copy()
+
+        # /collections/{handle}/{tag} — excluye /products/ y URLs de sistema
+        df_tag_pages = df_indexable[
+            df_indexable['url'].apply(lambda u: bool(
+                re.search(r'/collections/[^/?#]+/(?!products)[^/?#]+', u, re.I)
+            ) if isinstance(u, str) else False)
+        ].copy()
+        df_tag_pages = df_tag_pages[
+            ~df_tag_pages['url'].str.contains(
+                r'/collections/(vendors|types)', case=False, na=False, regex=True
+            )
+        ]
+
+        df_variants = df_indexable[
+            df_indexable['url'].str.contains(r'\?variant=', na=False, regex=False)
+        ].copy()
+    else:
+        df_collections_all = df_system_collections = df_scoped_products = pd.DataFrame(columns=df.columns)
+        df_tag_pages = df_variants = pd.DataFrame(columns=df.columns)
+
+    # ── Pre-cómputos Structured Data (T42–T48) ────────────────────────────────
+    HAS_SD_COL = 'structured_data' in df.columns
+
+    if HAS_SD_COL:
+        def _missing_schema(df_sub, schema_regex):
+            return df_sub[
+                ~df_sub['structured_data'].astype(str).str.contains(
+                    schema_regex, case=False, na=False, regex=True
+                )
+            ].copy()
+
+        _df_prods_idx   = df_indexable[df_indexable['url_type'] == 'product']
+        _df_colls_idx   = df_indexable[df_indexable['url_type'].isin(['collection', 'collections_root'])]
+        _df_home_idx    = df_indexable[df_indexable['url_type'] == 'homepage']
+        _df_blog_idx    = df_indexable[df_indexable['url_type'] == 'blog']
+        _df_bc_scope    = df_indexable[df_indexable['url_type'].isin(['product', 'collection', 'collections_root'])]
+
+        df_no_product_schema    = _missing_schema(_df_prods_idx,  r'Product')
+        df_no_rating_products   = _missing_schema(_df_prods_idx,  r'AggregateRating|Review')
+        df_no_rating_colls      = _missing_schema(_df_colls_idx,  r'AggregateRating|Review')
+        df_no_org_schema        = _missing_schema(_df_home_idx,   r'Organization|WebSite|LocalBusiness')
+        df_no_blogpost_schema   = _missing_schema(_df_blog_idx,   r'BlogPosting|Article|NewsArticle')
+        df_no_author_schema     = _missing_schema(_df_blog_idx,   r'Person|Author')
+        df_no_breadcrumb_schema = _missing_schema(_df_bc_scope,   r'BreadcrumbList')
+    else:
+        df_no_product_schema = df_no_rating_products = df_no_rating_colls = pd.DataFrame(columns=df.columns)
+        df_no_org_schema = df_no_blogpost_schema = df_no_author_schema = pd.DataFrame(columns=df.columns)
+        df_no_breadcrumb_schema = pd.DataFrame(columns=df.columns)
+
+    print(f"  H1 dup prods: {len(df_dup_h1_products)} | H1 dup colls: {len(df_dup_h1_colls)} | Meta dup: {len(df_dup_meta)}")
+    print(f"  Noindex linked: {len(df_noindex_linked)}")
+    if IS_SHOPIFY:
+        print(f"  Shopify — collections/all: {len(df_collections_all)} | system: {len(df_system_collections)}")
+        print(f"  Shopify — scoped: {len(df_scoped_products)} | tags: {len(df_tag_pages)} | variants: {len(df_variants)}")
+    if HAS_SD_COL:
+        print(f"  SD — no Product: {len(df_no_product_schema)} | no Rating: {len(df_no_rating_products)} | no Org: {len(df_no_org_schema)}")
+
 
     # ──────────────────────────────────────────────────────────────────────────────
     # 6. TAREAS
@@ -716,8 +839,9 @@ def run_audit(cfg, ruta_csv, output_path):
     n_4xx = len(df_4xx)
     n_404 = len(df_404)
     if n_4xx > 0:
-        top_404_url  = df_404.nlargest(1, 'impressions').iloc[0]['url'] if n_404 > 0 else ''
-        top_404_impr = int(df_404['impressions'].max()) if n_404 > 0 else 0
+        _404_has_gsc = HAS_GSC and 'impressions' in df_404.columns and n_404 > 0
+        top_404_url  = df_404.nlargest(1, 'impressions').iloc[0]['url'] if _404_has_gsc else ''
+        top_404_impr = int(df_404['impressions'].max()) if _404_has_gsc else 0
 
         # Detalle de inlinks cuando está disponible
         if HAS_INLINKS_DATA:
@@ -1564,10 +1688,361 @@ def run_audit(cfg, ruta_csv, output_path):
             sample_urls(df_deep.sort_values('impressions', ascending=False) if HAS_GSC and 'impressions' in df_deep.columns else df_deep)
         )
 
+    # T33 — H1 duplicado en fichas de producto (P2)
+    n_dup_h1_products = len(df_dup_h1_products)
+    if n_dup_h1_products > 0:
+        add_task(
+            'T33', 'P2', 'Metadatos / H1 duplicado',
+            f'Corregir {n_dup_h1_products:,} fichas de producto con H1 duplicado',
+            f'{n_dup_h1_products:,} páginas de producto comparten el mismo H1 con otra ficha. '
+            'Google puede confundirse sobre cuál es la página canónica para esa keyword.',
+            f'{n_dup_h1_products:,} URLs de /products/ con H1 repetido entre sí. '
+            'Indica que el H1 se genera desde el nombre del producto y varios productos comparten nombre o plantilla.',
+            f'Los templates de {PLATFORM} suelen usar el nombre del producto como H1. '
+            'Si dos productos tienen el mismo nombre (o uno es variante del otro), el H1 queda duplicado.',
+            '1. Identificar los grupos de productos con H1 idéntico. '
+            '2. Para variantes del mismo producto: consolidar en una sola URL canónica. '
+            '3. Para productos distintos: diferenciar el H1 añadiendo el modelo, capacidad, color, etc. '
+            '4. Verificar que el H1 incluye la keyword principal de la ficha.',
+            f'SF > H1 > filtrar duplicados + filtrar URL contiene /products/.',
+            'Bajo', 'Medio', 'Bajo', 'SEO',
+            'Re-crawl: 0 fichas de producto con H1 duplicado en el crawl.',
+            sample_urls(df_dup_h1_products, sort_by='impressions')
+        )
+
+    # T34 — H1 duplicado en colecciones/categorías (P2)
+    n_dup_h1_colls = len(df_dup_h1_colls)
+    if n_dup_h1_colls > 0:
+        add_task(
+            'T34', 'P2', 'Metadatos / H1 duplicado',
+            f'Corregir {n_dup_h1_colls:,} colecciones/categorías con H1 duplicado',
+            f'{n_dup_h1_colls:,} páginas de colección/categoría comparten H1 con otra. '
+            'Señal semántica ambigua para Google sobre qué página posicionar para cada categoría.',
+            f'{n_dup_h1_colls:,} URLs de colección con H1 repetido entre sí.',
+            f'Colecciones padres e hijas con nombres similares, o páginas de paginación que heredan el H1 del template.',
+            '1. Revisar el listado y localizar los grupos con H1 idéntico. '
+            '2. Diferenciar el H1 añadiendo el contexto de la categoría (ej. "Camisetas" → "Camisetas de Hombre"). '
+            '3. Asegurarse de que las páginas de paginación (/page/2) tienen canonical a /page/1 y no duplican el H1.',
+            'SF > H1 > filtrar duplicados + filtrar URL contiene /collections/ o /category/.',
+            'Bajo', 'Medio', 'Bajo', 'SEO',
+            'Re-crawl: 0 colecciones con H1 duplicado entre sí.',
+            sample_urls(df_dup_h1_colls, sort_by='impressions')
+        )
+
+    # T35 — Meta descriptions duplicadas entre páginas SEO (P2)
+    if n_unique_dup_meta > 0:
+        n_dup_meta = len(df_dup_meta)
+        add_task(
+            'T35', 'P2', 'Metadatos / Meta Description duplicada',
+            f'Diferenciar {n_dup_meta:,} páginas SEO que comparten meta description',
+            f'{n_dup_meta:,} páginas SEO indexables comparten la misma meta description '
+            f'({n_unique_dup_meta:,} textos únicos repetidos). '
+            'Google puede ignorar estas metas y generar las suyas propias, perdiendo control del snippet.',
+            f'{n_dup_meta:,} URLs con meta description duplicada ({n_unique_dup_meta:,} textos distintos usados en más de una página). '
+            'Suele ocurrir cuando el template genera una meta description genérica para todos los productos o categorías.',
+            f'El template de {PLATFORM} usa una meta description por defecto fija '
+            '(ej: "Compra en [tienda]. Envío rápido.") que se repite en todas las páginas sin personalización.',
+            '1. Identificar el texto duplicado más frecuente y localizar el template que lo genera. '
+            '2. Implementar meta description dinámica: [Keyword página] — [diferenciador]. '
+            '3. Priorizar las URLs con más impresiones en GSC para escritura manual. '
+            '4. Para el resto: configurar el template con variables de nombre, categoría y marca.',
+            'SF > Meta Description > Duplicada + filtrar Indexabilidad = Indexable.',
+            'Bajo', 'Medio', 'Bajo', 'SEO',
+            'Re-crawl: 0 páginas SEO con meta description compartida con otra URL.',
+            sample_urls(df_dup_meta, sort_by='impressions')
+        )
+
+    # T36 — Links internos a páginas noindex (P2)
+    n_noindex_linked = len(df_noindex_linked)
+    if n_noindex_linked > 0:
+        total_inlinks_wasted = int(df_noindex_linked['inlinks'].sum()) if 'inlinks' in df_noindex_linked.columns else 0
+        add_task(
+            'T36', 'P2', 'Rastreo / Crawl Budget',
+            f'Eliminar o añadir nofollow a {n_noindex_linked:,} enlaces internos que apuntan a páginas noindex',
+            f'{n_noindex_linked:,} páginas con status 200 pero marcadas como noindex reciben '
+            f'{total_inlinks_wasted:,} inlinks internos en total. '
+            'Cada enlace a una página noindex desperdicia crawl budget sin aportar valor SEO.',
+            f'{n_noindex_linked:,} URLs: status 200, noindex, con ≥1 inlink interno. '
+            f'Inlinks internos consumidos en estas páginas: {total_inlinks_wasted:,}. '
+            'Googlebot sigue estos enlaces y rastrear páginas noindex es tiempo de crawl perdido.',
+            'El enlazado interno del site (menú, footer, bloques de categorías, breadcrumbs) '
+            'apunta a páginas que se han marcado posteriormente como noindex sin actualizar los enlaces.',
+            '1. Exportar el listado completo y cruzar con SF > All Inlinks para localizar las páginas origen. '
+            '2. Para cada URL noindex con inlinks: decidir si eliminar el enlace o añadir rel="nofollow". '
+            '3. Revisar menú de navegación, footer y breadcrumbs como fuentes más comunes. '
+            '4. Opción alternativa: revisar si la página debería seguir siendo noindex.',
+            "SF > Filtrar Indexabilidad ≠ Indexable + Status 200 + Inlinks > 0. "
+            "SF > All Inlinks para localizar las páginas origen de cada enlace.",
+            'Bajo', 'Medio', 'Bajo', 'SEO + Dev',
+            'Re-crawl: 0 páginas noindex con inlinks internos follow activos.',
+            sample_urls(df_noindex_linked, sort_by='inlinks')
+        )
+
+    # T37 — /collections/all indexable (P1, Shopify)
+    if IS_SHOPIFY and len(df_collections_all) > 0:
+        n_coll_all = len(df_collections_all)
+        add_task(
+            'T37', 'P1', f'Indexación / {PLATFORM}',
+            f'Añadir noindex a /collections/all ({n_coll_all:,} URL indexable)',
+            f'/collections/all es una colección automática de Shopify que lista todos los productos '
+            'sin estructura ni intención de búsqueda definida. No debe indexarse.',
+            f'{n_coll_all:,} URL(s) de /collections/all detectadas como indexables en el crawl.',
+            'Shopify genera /collections/all por defecto y no aplica noindex automáticamente. '
+            'Esta página compite internamente con las colecciones específicas y no tiene valor SEO propio.',
+            '1. En el tema de Shopify, editar el template collection.liquid o sections/collection.liquid. '
+            '2. Añadir: {% if collection.handle == "all" %}<meta name="robots" content="noindex">{% endif %}. '
+            '3. Alternativa: añadir Disallow: /collections/all en robots.txt. '
+            '4. Comprobar que no hay tráfico orgánico significativo en GSC antes de noindexar.',
+            'SF > All URLs > filtrar URL contiene /collections/all + Indexabilidad = Indexable.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-crawl: /collections/all no aparece como Indexable.',
+            sample_urls(df_collections_all)
+        )
+
+    # T38 — /collections/vendors y /collections/types indexables (P1, Shopify)
+    if IS_SHOPIFY and len(df_system_collections) > 0:
+        n_sys_colls = len(df_system_collections)
+        add_task(
+            'T38', 'P1', f'Indexación / {PLATFORM}',
+            f'Añadir noindex a {n_sys_colls:,} colecciones de sistema de Shopify (/vendors, /types)',
+            f'{n_sys_colls:,} URL(s) de colecciones de sistema de Shopify son indexables. '
+            'Estas páginas automáticas (vendors, types) no tienen valor SEO y diluten la autoridad.',
+            f'{n_sys_colls:,} URL(s) con patrón /collections/vendors o /collections/types indexadas.',
+            'Shopify genera automáticamente páginas de vendedor (/collections/vendors?q=) y tipo '
+            '(/collections/types?q=) que raramente tienen valor SEO propio.',
+            '1. Añadir Disallow: /collections/vendors y Disallow: /collections/types en robots.txt. '
+            '2. O implementar noindex en el template para estas colecciones. '
+            '3. Verificar en GSC que no reciben tráfico orgánico relevante antes de aplicar.',
+            'SF > All URLs > filtrar URL contiene /collections/vendors o /collections/types.',
+            'Bajo', 'Bajo', 'Bajo', 'Dev',
+            'Re-crawl: 0 URLs de /collections/vendors o /collections/types indexables.',
+            sample_urls(df_system_collections)
+        )
+
+    # T39 — URLs de producto con scope de colección indexables (P1, Shopify)
+    if IS_SHOPIFY and len(df_scoped_products) > 0:
+        n_scoped = len(df_scoped_products)
+        add_task(
+            'T39', 'P1', f'Indexación / {PLATFORM}',
+            f'Corregir {n_scoped:,} URLs de producto con scope de colección indexables',
+            f'{n_scoped:,} URLs siguen el patrón /collections/{{handle}}/products/{{handle}}. '
+            'Son duplicados de /products/{{handle}} y pueden generar contenido duplicado si se indexan.',
+            f'{n_scoped:,} URLs indexables con patrón /collections/X/products/Y. '
+            'Cada una tiene su equivalente canónica en /products/Y.',
+            'Los temas de Shopify pueden enlazar a productos usando la URL con contexto de colección '
+            '(típico en breadcrumbs y listas de colección). Si el canonical no apunta a /products/, '
+            'Google puede indexar ambas versiones.',
+            '1. Verificar que el canonical de estas URLs apunta a /products/{handle}. '
+            '2. Si el canonical es correcto: revisar los enlaces internos para que apunten a /products/. '
+            '3. Actualizar breadcrumbs y templates de colección para generar URLs /products/ directas. '
+            '4. Añadir Disallow: /collections/*/products/ en robots.txt como medida de bloqueo.',
+            'SF > All URLs > filtrar URL contiene /collections/ y /products/ simultáneamente.',
+            'Bajo', 'Alto', 'Medio', 'Dev',
+            'Re-crawl: 0 URLs con patrón /collections/X/products/Y con estado Indexable '
+            'sin canonical correcto a /products/.',
+            sample_urls(df_scoped_products, sort_by='impressions')
+        )
+
+    # T40 — Tag pages de colección indexables (P1, Shopify)
+    if IS_SHOPIFY and len(df_tag_pages) > 0:
+        n_tags = len(df_tag_pages)
+        add_task(
+            'T40', 'P1', f'Indexación / {PLATFORM}',
+            f'Revisar {n_tags:,} páginas de etiqueta de colección indexables',
+            f'{n_tags:,} URLs de etiqueta de Shopify (/collections/handle/tag) son indexables. '
+            'Estas páginas tienen escaso contenido único y suelen canibalizar las colecciones principales.',
+            f'{n_tags:,} URLs con patrón /collections/{{handle}}/{{tag}} detectadas como indexables. '
+            'Evaluar si alguna tiene intención de búsqueda real antes de noindexar.',
+            'Shopify genera páginas de etiqueta automáticamente para cada tag asignado a productos. '
+            'Sin contenido editorial propio, estas páginas son thin content estructural.',
+            '1. Auditar en GSC si alguna tag page recibe tráfico orgánico significativo. '
+            '2. Para tags sin tráfico: añadir <meta name="robots" content="noindex"> en el template. '
+            '3. Revisar si los tags pueden consolidarse como colecciones reales con contenido. '
+            '4. Añadir Disallow para tags en robots.txt como alternativa rápida.',
+            'SF > All URLs > filtrar URL con patrón /collections/X/Y (doble segmento).',
+            'Bajo', 'Medio', 'Bajo', 'SEO + Dev',
+            'Re-crawl: 0 tag pages con status Indexable sin intención de búsqueda validada.',
+            sample_urls(df_tag_pages, sort_by='impressions')
+        )
+
+    # T41 — Variantes de producto indexables (P1, Shopify)
+    if IS_SHOPIFY and len(df_variants) > 0:
+        n_variants = len(df_variants)
+        add_task(
+            'T41', 'P1', f'Indexación / {PLATFORM}',
+            f'Eliminar indexación de {n_variants:,} URLs de variante de producto (?variant=)',
+            f'{n_variants:,} URLs de variante de producto con parámetro ?variant=XXXXX son indexables. '
+            'Son duplicados exactos de la ficha de producto base.',
+            f'{n_variants:,} URLs indexables con parámetro ?variant= en el crawl. '
+            'Cada URL de variante es idéntica a /products/{{handle}} salvo por el selector de variante JS.',
+            'Shopify genera URLs únicas por variante de producto. '
+            'Si el canonical de estas URLs no apunta a la ficha base, '
+            'Google las puede tratar como páginas independientes con contenido duplicado.',
+            '1. Verificar que el canonical de las URLs ?variant= apunta a /products/{handle} (sin parámetros). '
+            '2. Si el canonical es correcto, el riesgo es menor — pero conviene bloquear en robots. '
+            '3. Añadir en robots.txt: Disallow: *?variant=. '
+            '4. Revisar en GSC si alguna URL de variante aparece indexada.',
+            'SF > All URLs > filtrar URL contiene ?variant= + Indexabilidad = Indexable.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-crawl: 0 URLs con ?variant= en estado Indexable.',
+            sample_urls(df_variants, sort_by='impressions')
+        )
+
+    # T42 — Product schema ausente en fichas de producto (P1)
+    if HAS_SD_COL and len(df_no_product_schema) > 0:
+        n_no_prod_sd = len(df_no_product_schema)
+        add_task(
+            'T42', 'P1', 'Datos Estructurados / Product',
+            f'Implementar schema Product en {n_no_prod_sd:,} fichas de producto que carecen de él',
+            f'{n_no_prod_sd:,} fichas de producto indexables no tienen schema de tipo Product. '
+            'Sin este schema Google no puede mostrar rich results de producto (precio, disponibilidad, valoraciones).',
+            f'{n_no_prod_sd:,} URLs /products/ sin schema Product detectado por SF. '
+            'Los rich results de producto pueden incrementar el CTR un 20-30% en búsquedas de producto.',
+            f'El tema de {PLATFORM} no implementa schema Product, lo implementa de forma incompleta, '
+            'o lo genera mediante JavaScript (no visible para el crawler de SF).',
+            '1. Verificar con el Rich Results Test de Google si la ficha pasa la validación. '
+            '2. Implementar JSON-LD con Product incluyendo: name, description, image, sku, offers '
+            '(price, priceCurrency, availability, url). '
+            '3. Añadir brand y aggregateRating si hay valoraciones. '
+            '4. En Shopify: usar la app Schema Plus o implementarlo en el template product.liquid.',
+            'SF > Structured Data > filtrar URL /products/ + columna Structured Data no contiene "Product". '
+            'Validar con: https://search.google.com/test/rich-results',
+            'Medio', 'Alto', 'Bajo', 'Dev',
+            'Rich Results Test: todas las fichas de producto pasan la validación de Product schema. '
+            'GSC > Mejoras: 0 errores de schema Product.',
+            sample_urls(df_no_product_schema, sort_by='impressions')
+        )
+
+    # T43 — AggregateRating/Review ausente en fichas de producto (P1)
+    if HAS_SD_COL and len(df_no_rating_products) > 0:
+        n_no_rating_prod = len(df_no_rating_products)
+        add_task(
+            'T43', 'P1', 'Datos Estructurados / Reviews',
+            f'Implementar schema AggregateRating en {n_no_rating_prod:,} fichas de producto',
+            f'{n_no_rating_prod:,} fichas de producto carecen de schema AggregateRating o Review. '
+            'Las estrellas de valoración en el snippet SERP pueden incrementar el CTR significativamente.',
+            f'{n_no_rating_prod:,} URLs /products/ sin AggregateRating ni Review en Structured Data.',
+            'Las valoraciones del producto no están implementadas en el schema JSON-LD, '
+            'aunque puedan existir visualmente en la página (app de reviews no integrada en el markup).',
+            '1. Integrar la app de reviews (Judge.me, Yotpo, Okendo…) con schema AggregateRating. '
+            '2. Añadir al JSON-LD del Product: "aggregateRating": {"@type": "AggregateRating", '
+            '"ratingValue": "{{rating}}", "reviewCount": "{{count}}"}. '
+            '3. Solo incluir si hay valoraciones reales — Google penaliza el schema con datos falsos. '
+            '4. Validar con Rich Results Test.',
+            'SF > Structured Data > filtrar URL /products/ + sin AggregateRating.',
+            'Medio', 'Alto', 'Bajo', 'Dev',
+            'GSC > Mejoras: rich results de producto con estrellas activos. '
+            'Rich Results Test: pasa validación con AggregateRating.',
+            sample_urls(df_no_rating_products, sort_by='impressions')
+        )
+
+    # T44 — AggregateRating/Review ausente en colecciones (P2)
+    if HAS_SD_COL and len(df_no_rating_colls) > 0:
+        n_no_rating_colls = len(df_no_rating_colls)
+        add_task(
+            'T44', 'P2', 'Datos Estructurados / Reviews',
+            f'Valorar implementar schema AggregateRating en {n_no_rating_colls:,} colecciones',
+            f'{n_no_rating_colls:,} páginas de colección no tienen schema de valoración. '
+            'Añadir valoraciones agregadas en las colecciones puede mejorar el CTR en búsquedas de categoría.',
+            f'{n_no_rating_colls:,} colecciones indexables sin AggregateRating o Review.',
+            'Las apps de reviews implementan el schema a nivel de ficha de producto pero no en colecciones.',
+            '1. Evaluar si la página de colección muestra valoraciones de los productos listados. '
+            '2. Si sí: implementar AggregateRating como media de los productos. '
+            '3. Solo aplicar donde el resultado visual sea real y consistente.',
+            'SF > Structured Data > filtrar URL /collections/ + sin AggregateRating.',
+            'Medio', 'Medio', 'Medio', 'Dev',
+            'Rich Results Test: colecciones con AggregateRating pasan validación.',
+            sample_urls(df_no_rating_colls, sort_by='impressions')
+        )
+
+    # T45 — Organization/WebSite schema ausente en homepage (P1)
+    if HAS_SD_COL and len(df_no_org_schema) > 0:
+        add_task(
+            'T45', 'P1', 'Datos Estructurados / Organización',
+            'Implementar schema Organization y WebSite en la homepage',
+            'La homepage no tiene schema Organization ni WebSite. '
+            'Este schema es imprescindible para el Knowledge Panel y para que Google '
+            'entienda la entidad del negocio.',
+            '1 homepage indexable sin schema Organization, WebSite ni LocalBusiness.',
+            'El tema no implementa schema de entidad en la homepage o se genera por JS.',
+            '1. Añadir en la homepage un JSON-LD con Organization: name, url, logo, sameAs '
+            '(redes sociales), contactPoint. '
+            '2. Añadir WebSite con SearchAction para el sitelinks searchbox si aplica. '
+            '3. Si es un negocio local: usar LocalBusiness con address, telephone, openingHours.',
+            'SF > Structured Data > filtrar URL = homepage + sin Organization ni WebSite.',
+            'Bajo', 'Alto', 'Bajo', 'Dev',
+            'GSC > Mejoras: Knowledge Panel enriquecido. Rich Results Test: pasa con Organization.',
+            sample_urls(df_no_org_schema)
+        )
+
+    # T46 — BlogPosting schema ausente en artículos de blog (P2)
+    if HAS_SD_COL and len(df_no_blogpost_schema) > 0:
+        n_no_blog_sd = len(df_no_blogpost_schema)
+        add_task(
+            'T46', 'P2', 'Datos Estructurados / Blog',
+            f'Implementar schema BlogPosting/Article en {n_no_blog_sd:,} artículos de blog',
+            f'{n_no_blog_sd:,} artículos de blog indexables no tienen schema BlogPosting ni Article. '
+            'Este schema mejora la visibilidad en búsquedas de contenido e IA Overviews.',
+            f'{n_no_blog_sd:,} URLs de blog sin BlogPosting, Article ni NewsArticle en Structured Data.',
+            'El tema no implementa schema editorial en el template de artículos de blog.',
+            '1. Añadir JSON-LD BlogPosting en el template de artículo con: headline, datePublished, '
+            'dateModified, author (Person), image, description, url, publisher (Organization). '
+            '2. Vincular author con schema Person para señales E-E-A-T. '
+            '3. Incluir los artículos con más tráfico como prioridad.',
+            'SF > Structured Data > filtrar URL contiene /blogs/ + sin BlogPosting.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Rich Results Test: artículos pasan validación BlogPosting.',
+            sample_urls(df_no_blogpost_schema, sort_by='impressions')
+        )
+
+    # T47 — Person/Author schema ausente en artículos de blog (P2)
+    if HAS_SD_COL and len(df_no_author_schema) > 0:
+        n_no_author = len(df_no_author_schema)
+        add_task(
+            'T47', 'P2', 'Datos Estructurados / E-E-A-T',
+            f'Implementar schema Person (autor) en {n_no_author:,} artículos de blog',
+            f'{n_no_author:,} artículos de blog carecen de schema Person para el autor. '
+            'Las señales de autoría son clave para E-E-A-T, especialmente en nichos de salud, '
+            'finanzas o cualquier temática YMYL.',
+            f'{n_no_author:,} artículos de blog sin schema Person ni Author.',
+            'El schema BlogPosting no incluye el nodo Person para el autor, '
+            'o los artículos no tienen autoría asignada en el tema.',
+            '1. Crear una página de autor por cada redactor del blog con su nombre, bio, '
+            'foto y enlaces a redes profesionales (LinkedIn, Twitter). '
+            '2. Implementar en el schema BlogPosting: "author": {"@type": "Person", '
+            '"name": "...", "url": "...", "sameAs": [...]}. '
+            '3. Añadir la "tarjeta de autor" visible en el artículo para reforzar E-E-A-T on-page.',
+            'SF > Structured Data > filtrar URL /blogs/ + sin Person.',
+            'Bajo', 'Medio', 'Bajo', 'Dev + SEO',
+            'Artículos con schema Person validado en Rich Results Test. '
+            'Tarjeta de autor visible en el HTML de cada artículo.',
+            sample_urls(df_no_author_schema, sort_by='impressions')
+        )
+
+    # T48 — BreadcrumbList schema ausente en productos y colecciones (P2)
+    if HAS_SD_COL and len(df_no_breadcrumb_schema) > 0:
+        n_no_bc = len(df_no_breadcrumb_schema)
+        add_task(
+            'T48', 'P2', 'Datos Estructurados / Breadcrumb',
+            f'Implementar schema BreadcrumbList en {n_no_bc:,} páginas de producto y colección',
+            f'{n_no_bc:,} páginas (productos y colecciones) no tienen schema BreadcrumbList. '
+            'Los breadcrumbs en los snippets SERP mejoran la comprensión de la arquitectura y el CTR.',
+            f'{n_no_bc:,} URLs de /products/ y /collections/ sin BreadcrumbList en Structured Data.',
+            'El tema no genera schema de breadcrumb, o lo hace visualmente pero sin JSON-LD.',
+            '1. Implementar BreadcrumbList JSON-LD en los templates de producto y colección. '
+            '2. La estructura debe reflejar la jerarquía real: Home > Categoría > Subcategoría > Producto. '
+            '3. Asegurarse de que los breadcrumbs visuales y el schema coinciden. '
+            '4. Validar con Rich Results Test.',
+            'SF > Structured Data > filtrar URL /products/ o /collections/ + sin BreadcrumbList.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'GSC > Mejoras: breadcrumbs activos. Rich Results Test: BreadcrumbList validado.',
+            sample_urls(df_no_breadcrumb_schema, sort_by='impressions')
+        )
+
     print(f"  Total tareas: {len(tasks)}")
 
 
-    # ──────────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────���────────────────────────────────────
     # 7. URLs-PRIORIDAD
     # ──────────────────────────────────────────────────────────────────────────────
     print("\nBuilding URLs-Prioridad...")
@@ -1718,6 +2193,57 @@ def run_audit(cfg, ruta_csv, output_path):
         _df_ms = df_missing_from_sitemap.sort_values(_sort_ms, ascending=False) if _sort_ms in df_missing_from_sitemap.columns else df_missing_from_sitemap
         add_url_prio(_df_ms, 'URL indexable ausente del sitemap XML', 'P2',
                      'Añadir URL al sitemap.xml para facilitar descubrimiento por Googlebot.', max_n=20)
+
+    # P2: H1 duplicado en productos
+    if len(df_dup_h1_products) > 0:
+        add_url_prio(df_dup_h1_products, 'H1 duplicado — ficha de producto', 'P2',
+                     'Diferenciar el H1 añadiendo modelo, variante o característica clave.', max_n=30)
+
+    # P2: H1 duplicado en colecciones
+    if len(df_dup_h1_colls) > 0:
+        add_url_prio(df_dup_h1_colls, 'H1 duplicado — colección/categoría', 'P2',
+                     'Diferenciar el H1 añadiendo contexto de la categoría (ej. "de Hombre", "Outlet").', max_n=30)
+
+    # P2: meta description duplicada con tráfico
+    if HAS_GSC and len(df_dup_meta) > 0:
+        _df_dup_meta_impr = df_dup_meta[df_dup_meta['impressions'] > 0].sort_values('impressions', ascending=False)
+        add_url_prio(_df_dup_meta_impr, 'Meta description duplicada — URL con tráfico', 'P2',
+                     'Redactar meta description única (120-155 chars) diferenciada por keyword.', max_n=30)
+
+    # P2: noindex con inlinks
+    if len(df_noindex_linked) > 0:
+        add_url_prio(df_noindex_linked, 'Página noindex con inlinks internos — crawl budget desperdiciado', 'P2',
+                     'Eliminar o añadir nofollow a los enlaces que apuntan a esta URL noindex.', max_n=30, sort_by='inlinks')
+
+    # P1: Shopify — colecciones problemáticas y duplicados
+    if IS_SHOPIFY:
+        if len(df_collections_all) > 0:
+            add_url_prio(df_collections_all, 'Shopify — /collections/all indexable', 'P1',
+                         'Añadir noindex en template liquid o Disallow en robots.txt.', max_n=5)
+        if len(df_system_collections) > 0:
+            add_url_prio(df_system_collections, 'Shopify — colección de sistema indexable (vendors/types)', 'P1',
+                         'Añadir Disallow en robots.txt para /collections/vendors y /collections/types.', max_n=10)
+        if len(df_scoped_products) > 0:
+            add_url_prio(df_scoped_products, 'Shopify — URL producto con scope de colección (/collections/X/products/Y)', 'P1',
+                         'Verificar canonical a /products/{handle}. Actualizar enlaces internos.', max_n=30, sort_by='impressions')
+        if len(df_tag_pages) > 0:
+            add_url_prio(df_tag_pages, 'Shopify — tag page indexable (/collections/handle/tag)', 'P1',
+                         'Añadir noindex si no hay intención de búsqueda validada en GSC.', max_n=20, sort_by='impressions')
+        if len(df_variants) > 0:
+            add_url_prio(df_variants, 'Shopify — URL de variante indexable (?variant=)', 'P1',
+                         'Verificar canonical a URL base. Añadir Disallow: *?variant= en robots.txt.', max_n=20, sort_by='impressions')
+
+    # P1: Structured Data críticos
+    if HAS_SD_COL:
+        if len(df_no_product_schema) > 0:
+            add_url_prio(df_no_product_schema, 'Sin schema Product — ficha de producto', 'P1',
+                         'Implementar JSON-LD Product con offers, availability y aggregateRating.', max_n=30, sort_by='impressions')
+        if len(df_no_rating_products) > 0:
+            add_url_prio(df_no_rating_products, 'Sin schema AggregateRating — ficha de producto', 'P1',
+                         'Integrar valoraciones de la app de reviews en el JSON-LD del Product.', max_n=30, sort_by='impressions')
+        if len(df_no_org_schema) > 0:
+            add_url_prio(df_no_org_schema, 'Sin schema Organization/WebSite — homepage', 'P1',
+                         'Implementar JSON-LD Organization con name, url, logo y sameAs.', max_n=1)
 
     # Deduplicar por URL, conservar la de mayor prioridad
     prio_order = {'P0': 0, 'P1': 1, 'P2': 2, 'P3': 3}
