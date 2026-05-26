@@ -199,12 +199,24 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 except UnicodeDecodeError:
                     continue
             _links_raw.columns = [c.strip().lower().replace(' ', '_') for c in _links_raw.columns]
-            _lsrc = next((c for c in _links_raw.columns if c in ('source', 'source_url', 'from', 'from_url')), None)
-            _ldst = next((c for c in _links_raw.columns if c in ('destination', 'destination_url', 'to', 'to_url', 'href')), None)
-            _lanc = next((c for c in _links_raw.columns if c in ('anchor', 'anchor_text', 'link_text', 'text')), None)
-            _lalt = next((c for c in _links_raw.columns if c in ('alt_text', 'alt', 'image_alt', 'alternative_text')), None)
-            _ltyp = next((c for c in _links_raw.columns if c in ('type', 'link_type')), None)
-            _ltag = next((c for c in _links_raw.columns if c in ('tag', 'element', 'html_tag')), None)
+            print(f"  All Links CSV columnas detectadas: {list(_links_raw.columns[:8])}")
+            # Nombres en inglés Y español (SF exporta según idioma de la app)
+            _lsrc = next((c for c in _links_raw.columns if c in (
+                'source', 'source_url', 'from', 'from_url', 'origen', 'url_origen', 'desde')), None)
+            _ldst = next((c for c in _links_raw.columns if c in (
+                'destination', 'destination_url', 'to', 'to_url', 'href',
+                'destino', 'url_destino', 'hasta')), None)
+            _lanc = next((c for c in _links_raw.columns if c in (
+                'anchor', 'anchor_text', 'link_text', 'text',
+                'texto_ancla', 'ancla', 'texto_de_ancla', 'texto_anclaje')), None)
+            _lalt = next((c for c in _links_raw.columns if c in (
+                'alt_text', 'alt', 'image_alt', 'alternative_text',
+                'texto_alternativo', 'alt_texto', 'texto_alt')), None)
+            _ltyp = next((c for c in _links_raw.columns if c in (
+                'type', 'link_type', 'tipo', 'tipo_enlace')), None)
+            _ltag = next((c for c in _links_raw.columns if c in (
+                'tag', 'element', 'html_tag', 'etiqueta')), None)
+            print(f"  All Links columnas mapeadas → src:{_lsrc} dst:{_ldst} anc:{_lanc} typ:{_ltyp}")
             if _lsrc and _ldst:
                 _rename_l = {_lsrc: 'link_source', _ldst: 'link_dest'}
                 if _lanc: _rename_l[_lanc] = 'anchor'
@@ -212,16 +224,18 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 if _ltyp: _rename_l[_ltyp] = 'link_type'
                 if _ltag: _rename_l[_ltag] = 'link_tag'
                 _df_links = _links_raw.rename(columns=_rename_l).copy()
-                _df_links['link_source'] = _df_links['link_source'].astype(str).str.strip()
-                _df_links['link_dest']   = _df_links['link_dest'].astype(str).str.strip()
+                # Normalizar URLs (quitar trailing slash para matching consistente)
+                _df_links['link_source'] = _df_links['link_source'].astype(str).str.strip().str.rstrip('/')
+                _df_links['link_dest']   = _df_links['link_dest'].astype(str).str.strip().str.rstrip('/')
                 # Filtrar a enlaces reales (excluir canonical, hreflang, etc.)
                 if 'link_type' in _df_links.columns:
-                    _keep = _df_links['link_type'].str.lower().str.strip().isin(['href', 'img', 'image', 'src'])
+                    _keep = _df_links['link_type'].str.lower().str.strip().isin(
+                        ['href', 'img', 'image', 'src', 'hyperlink', 'enlace', 'imagen'])
                     _df_links = _df_links[_keep].copy()
                 # Detectar imagen (vectorizado)
                 _img_mask = pd.Series(False, index=_df_links.index)
                 if 'link_type' in _df_links.columns:
-                    _img_mask |= _df_links['link_type'].str.lower().str.strip().isin(['img', 'image', 'src'])
+                    _img_mask |= _df_links['link_type'].str.lower().str.strip().isin(['img', 'image', 'src', 'imagen'])
                 if 'link_tag' in _df_links.columns:
                     _img_mask |= _df_links['link_tag'].str.lower().str.strip() == 'img'
                 if 'alt_text' in _df_links.columns:
@@ -233,6 +247,8 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 _df_links['es_imagen'] = _img_mask
                 HAS_LINKS = True
                 print(f"  All Links CSV cargado: {len(_df_links):,} enlaces")
+            else:
+                print(f"  All Links CSV: no se encontraron columnas source/destination. Columnas disponibles: {list(_links_raw.columns)}")
         except Exception as _links_err:
             print(f"  Warning: All Links CSV no cargado: {_links_err}")
 
@@ -2144,8 +2160,10 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     if HAS_LINKS and _df_links is not None:
         # T03 — 404s: una fila por enlace entrante (origen → 404)
         if 'T03' in _task_ids_generated and len(df_4xx) > 0:
-            _urls_4xx = set(df_4xx['url'].tolist())
+            # Normalizar trailing slash para matching consistente
+            _urls_4xx = set(df_4xx['url'].str.rstrip('/').tolist())
             _links_404 = _df_links[_df_links['link_dest'].isin(_urls_4xx)].copy()
+            print(f"  T03 matching: {len(_urls_4xx)} URLs 4xx vs {len(_df_links)} enlaces → {len(_links_404)} matches")
             if len(_links_404) > 0:
                 _gsc_cols_4xx = [c for c in ['impressions', 'clicks', 'position'] if c in df_4xx.columns]
                 _4xx_meta = df_4xx[['url'] + _gsc_cols_4xx].rename(columns={'url': 'link_dest'})
@@ -2167,8 +2185,9 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
         # T04 — 301s: una fila por enlace entrante (origen → redirect)
         if 'T04' in _task_ids_generated and len(df_301) > 0:
-            _urls_301 = set(df_301['url'].tolist())
+            _urls_301 = set(df_301['url'].str.rstrip('/').tolist())
             _links_301 = _df_links[_df_links['link_dest'].isin(_urls_301)].copy()
+            print(f"  T04 matching: {len(_urls_301)} URLs 301 vs {len(_df_links)} enlaces → {len(_links_301)} matches")
             if len(_links_301) > 0:
                 _301_extra = ['redirect_url'] if 'redirect_url' in df_301.columns else []
                 _301_meta = df_301[['url'] + _301_extra].rename(columns={'url': 'link_dest', 'redirect_url': 'redirige_a'})
