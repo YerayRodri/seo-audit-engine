@@ -583,6 +583,17 @@ with col_left:
 
     st.divider()
 
+    st.markdown('<div class="section-header"><span class="section-number">1b</span><span class="section-title">All Links (opcional)</span></div>', unsafe_allow_html=True)
+    uploaded_links_csv = st.file_uploader(
+        "CSV All Links de Screaming Frog",
+        type=["csv"],
+        help="SF → Bulk Export → All Links. Añade URL origen, texto ancla e imagen/texto al Excel de errores 404 y redirects 301.",
+    )
+    if uploaded_links_csv:
+        st.success(f"✅ **{uploaded_links_csv.name}** cargado ({uploaded_links_csv.size / 1024:.0f} KB) — los Excel de T03/T04 incluirán el origen de cada enlace")
+
+    st.divider()
+
     st.markdown('<div class="section-header"><span class="section-number">2</span><span class="section-title">Datos del cliente</span></div>', unsafe_allow_html=True)
 
     domain = st.text_input(
@@ -778,6 +789,12 @@ if run_btn and uploaded_csv and domain:
         with open(csv_path, "wb") as f:
             f.write(uploaded_csv.getvalue())
 
+        links_csv_path = None
+        if uploaded_links_csv:
+            links_csv_path = os.path.join(tmpdir, uploaded_links_csv.name)
+            with open(links_csv_path, "wb") as f:
+                f.write(uploaded_links_csv.getvalue())
+
         # Barra de progreso indeterminada
         with st.spinner(f"⚙️ Analizando **{uploaded_csv.name}** para **{domain}**…"):
             log_lines = []
@@ -788,7 +805,7 @@ if run_btn and uploaded_csv and domain:
 
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    stats = run_audit(cfg_obj, csv_path, output_path)
+                    stats = run_audit(cfg_obj, csv_path, output_path, ruta_links_csv=links_csv_path)
                 log_lines = buf.getvalue().splitlines()
 
                 # Leer el Excel generado antes de que salga del tmpdir
@@ -807,7 +824,7 @@ if run_btn and uploaded_csv and domain:
     dash = stats.get('dashboard', {})
     fname = f"auditoria-seo-{domain.strip()}-{fecha}.xlsx"
 
-    tab_dash, tab_dl, tab_log = st.tabs(["📊 Dashboard SEO", "⬇️ Descargar Excel", "📋 Log"])
+    tab_dash, tab_tasks, tab_dl, tab_log = st.tabs(["📊 Dashboard SEO", "📋 Plan de Tareas", "⬇️ Descargar Excel", "🗒️ Log"])
 
     # ── TAB: Descargar Excel ───────────────────────────────────────────────────
     with tab_dl:
@@ -1063,7 +1080,7 @@ if run_btn and uploaded_csv and domain:
 
             st.markdown("---")
 
-        # ── Plan de Acción — Tareas ───────────────────────────────────────────
+        # ── Plan de Acción — resumen ──────────────────────────────────────────
         st.markdown('<div class="dash-section">📋 Plan de Acción</div>', unsafe_allow_html=True)
         _tasks_list = dash.get('tasks_list', [])
         _PRIO_CFG = {
@@ -1072,18 +1089,131 @@ if run_btn and uploaded_csv and domain:
             'P2': ('📌', '#fefce8', '#ca8a04', '#a16207', 'PENDIENTE — próximo sprint'),
             'P3': ('💡', '#f0fdf4', '#16a34a', '#15803d', 'MEJORA — backlog'),
         }
-        for _prio in ['P0', 'P1', 'P2', 'P3']:
-            _pt = [t for t in _tasks_list if t.get('priority') == _prio]
-            if not _pt:
-                continue
+        _sum_cols = st.columns(4)
+        for _ci, _prio in enumerate(['P0', 'P1', 'P2', 'P3']):
+            _pt_count = len([t for t in _tasks_list if t.get('priority') == _prio])
             _icon, _bg, _border, _txt, _lbl_p = _PRIO_CFG[_prio]
-            with st.expander(f"{_icon} {_prio} — {_lbl_p} ({len(_pt)} tareas)", expanded=(_prio == 'P0')):
+            _sum_cols[_ci].markdown(f"""
+            <div style="background:{_bg};border:2px solid {_border};border-radius:12px;
+              padding:16px;text-align:center">
+              <div style="font-size:1.8rem;font-weight:800;color:{_txt}">{_pt_count}</div>
+              <div style="font-size:0.72rem;font-weight:700;color:{_txt};margin-top:2px">{_icon} {_prio}</div>
+              <div style="font-size:0.68rem;color:#64748b;margin-top:4px">{_lbl_p.split(' — ')[1]}</div>
+            </div>""", unsafe_allow_html=True)
+        st.caption("Ver detalle completo en la pestaña **📋 Plan de Tareas**")
+
+    # ── TAB: Plan de Tareas ───────────────────────────────────────────────────
+    with tab_tasks:
+        import io as _io
+
+        _detail_dfs  = stats.get('detail_dfs', {})
+        _tasks_all   = dash.get('tasks_list', [])
+
+        _PRIO_CFG2 = {
+            'P0': ('🚨', '#fef2f2', '#ef4444', '#dc2626', 'CRÍTICO — acción inmediata'),
+            'P1': ('⚠️', '#fffbeb', '#d97706', '#b45309', 'IMPORTANTE — próximas semanas'),
+            'P2': ('📌', '#fefce8', '#ca8a04', '#a16207', 'PENDIENTE — próximo sprint'),
+            'P3': ('💡', '#f0fdf4', '#16a34a', '#15803d', 'MEJORA — backlog'),
+        }
+
+        def _make_task_excel(task_dict, df_detail):
+            buf = _io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                # Hoja 1: URLs afectadas
+                df_detail.to_excel(writer, sheet_name='URLs afectadas', index=False)
+                # Hoja 2: Ficha de la tarea
+                _meta_rows = [
+                    ('ID',           task_dict.get('id', '')),
+                    ('Prioridad',    task_dict.get('priority', '')),
+                    ('Categoría',    task_dict.get('category', '')),
+                    ('Tarea',        task_dict.get('task', '')),
+                    ('Descripción',  task_dict.get('description', '')),
+                    ('Causa',        task_dict.get('cause', '')),
+                    ('Qué hacer',    task_dict.get('todo', '')),
+                    ('Dónde',        task_dict.get('where', '')),
+                    ('Esfuerzo',     task_dict.get('effort', '')),
+                    ('Impacto',      task_dict.get('impact', '')),
+                    ('Riesgo',       task_dict.get('risk', '')),
+                    ('Responsable',  task_dict.get('responsible', '')),
+                    ('Validación',   task_dict.get('validation', '')),
+                    ('Evidencia',    task_dict.get('evidence', '')),
+                ]
+                pd.DataFrame(_meta_rows, columns=['Campo', 'Valor']).to_excel(
+                    writer, sheet_name='Ficha tarea', index=False
+                )
+            buf.seek(0)
+            return buf.read()
+
+        if not _tasks_all:
+            st.info("Ejecuta una auditoría para ver el plan de tareas.")
+        else:
+            st.markdown(f"**{len(_tasks_all)} tareas detectadas** — {len(_detail_dfs)} con exportación Excel disponible")
+            st.markdown("---")
+
+            for _prio in ['P0', 'P1', 'P2', 'P3']:
+                _pt = [t for t in _tasks_all if t.get('priority') == _prio]
+                if not _pt:
+                    continue
+                _icon, _bg, _border, _txt, _lbl_p = _PRIO_CFG2[_prio]
+                st.markdown(f"""
+                <div style="background:{_bg};border-left:5px solid {_border};border-radius:0 10px 10px 0;
+                  padding:10px 18px;margin:18px 0 8px 0">
+                  <span style="font-size:1rem;font-weight:700;color:{_txt}">{_icon} {_prio} — {_lbl_p} &nbsp;
+                    <span style="font-weight:400;font-size:0.82rem;color:#64748b">({len(_pt)} tareas)</span>
+                  </span>
+                </div>""", unsafe_allow_html=True)
+
                 for _t in _pt:
-                    st.markdown(f"""
-                    <div style="background:{_bg};border-left:4px solid {_border};
-                      border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:8px">
-                      <div style="font-weight:600;color:{_txt};font-size:0.87rem">[{_t['id']}] {_t['task']}</div>
-                      <div style="font-size:0.76rem;color:#64748b;margin-top:4px">{_t['evidence']}</div>
-                    </div>""", unsafe_allow_html=True)
+                    _tid = _t['id']
+                    _has_dl = _tid in _detail_dfs
+                    _exp_label = f"**[{_tid}]** {_t['task']}"
+                    with st.expander(_exp_label, expanded=False):
+                        _c1, _c2 = st.columns([3, 1])
+                        with _c1:
+                            st.markdown(f"**Categoría:** {_t.get('category', '')}")
+                            if _t.get('description'):
+                                st.markdown(f"**Descripción:** {_t.get('description', '')}")
+                            if _t.get('cause'):
+                                st.markdown(f"**Causa probable:** {_t.get('cause', '')}")
+                            if _t.get('todo'):
+                                st.markdown(f"**Qué hacer:** {_t.get('todo', '')}")
+                            if _t.get('where'):
+                                st.markdown(f"**Dónde detectarlo:** {_t.get('where', '')}")
+                        with _c2:
+                            _ef = _t.get('effort', '')
+                            _im = _t.get('impact', '')
+                            _ri = _t.get('risk', '')
+                            _re = _t.get('responsible', '')
+                            if _ef:
+                                st.markdown(f"**Esfuerzo:** {_ef}")
+                            if _im:
+                                st.markdown(f"**Impacto:** {_im}")
+                            if _ri:
+                                st.markdown(f"**Riesgo:** {_ri}")
+                            if _re:
+                                st.markdown(f"**Responsable:** {_re}")
+
+                        if _t.get('validation'):
+                            st.markdown(f"**Validación:** {_t.get('validation', '')}")
+
+                        if _t.get('evidence'):
+                            st.markdown("**Evidencia:**")
+                            st.code(_t['evidence'], language=None)
+
+                        if _t.get('urls_sample'):
+                            st.markdown("**URLs de ejemplo:**")
+                            st.code(_t['urls_sample'], language=None)
+
+                        if _has_dl:
+                            _df_dl = _detail_dfs[_tid]
+                            st.caption(f"📊 {len(_df_dl):,} URLs afectadas")
+                            _xls_bytes = _make_task_excel(_t, _df_dl)
+                            st.download_button(
+                                label=f"⬇️ Descargar Excel — {_tid}",
+                                data=_xls_bytes,
+                                file_name=f"tarea-{_tid}-{domain.strip()}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_{_tid}",
+                            )
 
 st.markdown('<div class="seo-footer">SEO Audit Engine &nbsp;·&nbsp; Powered by <a href="https://www.visibilidadon.com/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Visibilidad ON</a> &nbsp;·&nbsp; Hecho por <a href="https://yerayrodri.online/" target="_blank" rel="noopener noreferrer" style="color:#94a3b8;text-decoration:underline;">Yeray Rodriguez</a></div>', unsafe_allow_html=True)

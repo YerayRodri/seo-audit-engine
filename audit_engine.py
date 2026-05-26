@@ -40,17 +40,19 @@ def load_config(config_path):
 # MOTOR PRINCIPAL — llamable desde CLI y desde la UI web
 # ──────────────────────────────────────────────────────────────────────────────
 
-def run_audit(cfg, ruta_csv, output_path):
+def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     """
     Ejecuta la auditoría SEO completa.
 
     Args:
-        cfg           -- módulo/objeto con los atributos de configuración del cliente
-        ruta_csv      -- ruta absoluta al export CSV de Screaming Frog
-        output_path   -- ruta completa del Excel de salida (.xlsx)
+        cfg             -- módulo/objeto con los atributos de configuración del cliente
+        ruta_csv        -- ruta absoluta al export CSV de Screaming Frog (Internal All)
+        output_path     -- ruta completa del Excel de salida (.xlsx)
+        ruta_links_csv  -- (opcional) ruta al export "All Links" de SF para enriquecer
+                           los Excel de T03/T04 con URL origen, texto ancla y tipo enlace
 
     Returns:
-        dict con claves: tasks, urls, gsc, resumen, output_path
+        dict con claves: tasks, urls, gsc, resumen, output_path, dashboard, detail_dfs
     """
     RUTA_CSV   = ruta_csv
     OUTPUT_PATH = output_path
@@ -137,6 +139,7 @@ def run_audit(cfg, ruta_csv, output_path):
         'Response Time': 'response_time',
         'Indexability Status': 'indexability_status',
         'Structured Data': 'structured_data',
+        'Redirect URL':    'redirect_url',
     }
     sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
     if sf_rename:
@@ -184,6 +187,54 @@ def run_audit(cfg, ruta_csv, output_path):
     print(f"  Filas raw: {len(df_raw):,} → HTML: {len(df):,}")
     print(f"  GSC: {HAS_GSC} | Inlinks: {HAS_INLINKS_DATA}")
 
+    # ── All Links CSV (opcional — enriquece T03/T04 con origen del enlace) ────────
+    HAS_LINKS = False
+    _df_links = None
+    if ruta_links_csv:
+        try:
+            for _enc in ('utf-8', 'latin-1', 'utf-8-sig'):
+                try:
+                    _links_raw = pd.read_csv(ruta_links_csv, encoding=_enc, low_memory=False, dtype=str)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            _links_raw.columns = [c.strip().lower().replace(' ', '_') for c in _links_raw.columns]
+            _lsrc = next((c for c in _links_raw.columns if c in ('source', 'source_url', 'from', 'from_url')), None)
+            _ldst = next((c for c in _links_raw.columns if c in ('destination', 'destination_url', 'to', 'to_url', 'href')), None)
+            _lanc = next((c for c in _links_raw.columns if c in ('anchor', 'anchor_text', 'link_text', 'text')), None)
+            _lalt = next((c for c in _links_raw.columns if c in ('alt_text', 'alt', 'image_alt', 'alternative_text')), None)
+            _ltyp = next((c for c in _links_raw.columns if c in ('type', 'link_type')), None)
+            _ltag = next((c for c in _links_raw.columns if c in ('tag', 'element', 'html_tag')), None)
+            if _lsrc and _ldst:
+                _rename_l = {_lsrc: 'link_source', _ldst: 'link_dest'}
+                if _lanc: _rename_l[_lanc] = 'anchor'
+                if _lalt: _rename_l[_lalt] = 'alt_text'
+                if _ltyp: _rename_l[_ltyp] = 'link_type'
+                if _ltag: _rename_l[_ltag] = 'link_tag'
+                _df_links = _links_raw.rename(columns=_rename_l).copy()
+                _df_links['link_source'] = _df_links['link_source'].astype(str).str.strip()
+                _df_links['link_dest']   = _df_links['link_dest'].astype(str).str.strip()
+                # Filtrar a enlaces reales (excluir canonical, hreflang, etc.)
+                if 'link_type' in _df_links.columns:
+                    _keep = _df_links['link_type'].str.lower().str.strip().isin(['href', 'img', 'image', 'src'])
+                    _df_links = _df_links[_keep].copy()
+                # Detectar imagen (vectorizado)
+                _img_mask = pd.Series(False, index=_df_links.index)
+                if 'link_type' in _df_links.columns:
+                    _img_mask |= _df_links['link_type'].str.lower().str.strip().isin(['img', 'image', 'src'])
+                if 'link_tag' in _df_links.columns:
+                    _img_mask |= _df_links['link_tag'].str.lower().str.strip() == 'img'
+                if 'alt_text' in _df_links.columns:
+                    _img_mask |= (
+                        _df_links['alt_text'].notna() &
+                        (_df_links['alt_text'].astype(str).str.strip() != '') &
+                        (_df_links['alt_text'].astype(str).str.lower() != 'nan')
+                    )
+                _df_links['es_imagen'] = _img_mask
+                HAS_LINKS = True
+                print(f"  All Links CSV cargado: {len(_df_links):,} enlaces")
+        except Exception as _links_err:
+            print(f"  Warning: All Links CSV no cargado: {_links_err}")
 
     # ──────────────────────────────────────────────────────────────────────────────
     # 3. CLASIFICACIÓN DE URLs
@@ -2041,8 +2092,142 @@ def run_audit(cfg, ruta_csv, output_path):
 
     print(f"  Total tareas: {len(tasks)}")
 
+    # ── Detail DataFrames por tarea (para descargas en la UI) ─────────────────
+    _DETAIL_OPT = [
+        'status', 'indexable', 'indexability_status',
+        'title', 'title_len',
+        'meta_desc', 'meta_desc_len',
+        'h1', 'h2', 'canonical', 'meta_robots', 'word_count', 'structured_data',
+        'inlinks', 'depth', 'redirect_url', 'response_time',
+        'impressions', 'clicks', 'ctr', 'position',
+    ]
 
-    # ─────────────────────────────────────────���────────────────────────────────────
+    def _build_detail_df(df_sub):
+        if df_sub is None or len(df_sub) == 0:
+            return None
+        cols = ['url'] + [c for c in _DETAIL_OPT if c in df_sub.columns]
+        out = df_sub[cols].reset_index(drop=True)
+        if 'impressions' in out.columns:
+            out = out.sort_values('impressions', ascending=False)
+        return out
+
+    _task_df_map = {
+        'T01': df_ca,               'T02': df_5xx,              'T03': df_4xx,
+        'T04': df_301,              'T05': df_double_slash_all,
+        'T06': df_cart_reco_indexable, 'T07': df_paginaciones_indexable,
+        'T08': df_no_meta,          'T09': df_no_h1,
+        'T10': df_seo_demand,       'T11': df_pos_11_20,
+        'T12': df_low_ctr,          'T13': df_short_title,
+        'T15': df_sensitive,        'T16': df_facets,
+        'T17': df_non_self_canonical, 'T18': df_thin,
+        'T19': df_302,              'T20': df_orphans,
+        'T21': df_noindex_in_sitemap, 'T22': df_missing_from_sitemap,
+        'T23': df_slow,             'T24': df_parametered,
+        'T25': df_long_urls,        'T26': df_dup_titles,
+        'T27': df_noindex_with_gsc, 'T28': df_long_titles,
+        'T29': df_no_canonical,     'T30': df_no_h2,
+        'T31': df_title_eq_h1,      'T32': df_deep,
+        'T33': df_dup_h1_products,  'T34': df_dup_h1_colls,
+        'T35': df_dup_meta,         'T36': df_noindex_linked,
+        'T37': df_collections_all,  'T38': df_system_collections,
+        'T39': df_scoped_products,  'T40': df_tag_pages,
+        'T41': df_variants,         'T42': df_no_product_schema,
+        'T43': df_no_rating_products, 'T44': df_no_rating_colls,
+        'T45': df_no_org_schema,    'T46': df_no_blogpost_schema,
+        'T47': df_no_author_schema, 'T48': df_no_breadcrumb_schema,
+    }
+
+    _task_ids_generated = {t['ID'] for t in tasks}
+
+    # ── DataFrames enriquecidos con All Links (T03/T04) ───────────────────────────
+    _prebuilt_detail_dfs = {}
+    if HAS_LINKS and _df_links is not None:
+        # T03 — 404s: una fila por enlace entrante (origen → 404)
+        if 'T03' in _task_ids_generated and len(df_4xx) > 0:
+            _urls_4xx = set(df_4xx['url'].tolist())
+            _links_404 = _df_links[_df_links['link_dest'].isin(_urls_4xx)].copy()
+            if len(_links_404) > 0:
+                _gsc_cols_4xx = [c for c in ['impressions', 'clicks', 'position'] if c in df_4xx.columns]
+                _4xx_meta = df_4xx[['url'] + _gsc_cols_4xx].rename(columns={'url': 'link_dest'})
+                _links_404 = _links_404.merge(_4xx_meta, on='link_dest', how='left')
+                _links_404 = _links_404.rename(columns={
+                    'link_dest':   'url_404',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_cols_404 = ['url_404', 'pagina_origen', 'texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_404.columns: _out_cols_404.append('texto_alt')
+                _out_cols_404 += [c for c in ['impressions', 'clicks', 'position'] if c in _links_404.columns]
+                _links_404 = _links_404[[c for c in _out_cols_404 if c in _links_404.columns]].reset_index(drop=True)
+                if 'impressions' in _links_404.columns:
+                    _links_404 = _links_404.sort_values('impressions', ascending=False)
+                _prebuilt_detail_dfs['T03'] = _links_404
+                print(f"  T03 enriquecido: {len(_links_404):,} enlaces a URLs 4xx")
+
+        # T04 — 301s: una fila por enlace entrante (origen → redirect)
+        if 'T04' in _task_ids_generated and len(df_301) > 0:
+            _urls_301 = set(df_301['url'].tolist())
+            _links_301 = _df_links[_df_links['link_dest'].isin(_urls_301)].copy()
+            if len(_links_301) > 0:
+                _301_extra = ['redirect_url'] if 'redirect_url' in df_301.columns else []
+                _301_meta = df_301[['url'] + _301_extra].rename(columns={'url': 'link_dest', 'redirect_url': 'redirige_a'})
+                _links_301 = _links_301.merge(_301_meta, on='link_dest', how='left')
+                _links_301 = _links_301.rename(columns={
+                    'link_dest':   'url_redirect',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_cols_301 = ['url_redirect']
+                if 'redirige_a' in _links_301.columns: _out_cols_301.append('redirige_a')
+                _out_cols_301 += ['pagina_origen', 'texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_301.columns: _out_cols_301.append('texto_alt')
+                _links_301 = _links_301[[c for c in _out_cols_301 if c in _links_301.columns]].reset_index(drop=True)
+                _prebuilt_detail_dfs['T04'] = _links_301
+                print(f"  T04 enriquecido: {len(_links_301):,} enlaces a URLs 301")
+
+    # ── Detail DFs estándar (resto de tareas) ────────────────────────────────────
+    detail_dfs = dict(_prebuilt_detail_dfs)
+    for _tid, _df_sub in _task_df_map.items():
+        if _tid in detail_dfs:
+            continue  # ya tiene versión enriquecida
+        if _tid in _task_ids_generated and _df_sub is not None and len(_df_sub) > 0:
+            _ddf = _build_detail_df(_df_sub)
+            if _ddf is not None:
+                detail_dfs[_tid] = _ddf
+
+    print(f"  Detail DFs: {len(detail_dfs)} tareas con URLs exportables")
+
+    # ── Post-procesado: agrupar duplicados para facilitar ejecución ───────────────
+    # T26 — Títulos duplicados: agrupar por título + ordenar grupo
+    if 'T26' in detail_dfs and 'title' in detail_dfs['T26'].columns:
+        _d26 = detail_dfs['T26'].copy()
+        _d26['grupo_dup_title'] = _d26.groupby(_d26['title'].str.lower().str.strip()).ngroup() + 1
+        _sort_26 = ['grupo_dup_title'] + (['impressions'] if 'impressions' in _d26.columns else ['url'])
+        detail_dfs['T26'] = _d26.sort_values(_sort_26, ascending=[True] + [False] * (len(_sort_26) - 1))
+
+    # T35 — Meta descriptions duplicadas: agrupar por meta desc
+    if 'T35' in detail_dfs and 'meta_desc' in detail_dfs['T35'].columns:
+        _d35 = detail_dfs['T35'].copy()
+        _d35['grupo_dup_meta'] = _d35.groupby(_d35['meta_desc'].str.lower().str.strip()).ngroup() + 1
+        detail_dfs['T35'] = _d35.sort_values('grupo_dup_meta')
+
+    # T33 — H1 duplicado en productos: agrupar por H1
+    _h1c = 'h1_1' if 'h1_1' in df.columns else ('h1' if 'h1' in df.columns else None)
+    if 'T33' in detail_dfs and _h1c and _h1c in detail_dfs['T33'].columns:
+        _d33 = detail_dfs['T33'].copy()
+        _d33['grupo_dup_h1'] = _d33.groupby(_d33[_h1c].str.lower().str.strip()).ngroup() + 1
+        detail_dfs['T33'] = _d33.sort_values('grupo_dup_h1')
+
+    # T34 — H1 duplicado en colecciones: mismo tratamiento
+    if 'T34' in detail_dfs and _h1c and _h1c in detail_dfs['T34'].columns:
+        _d34 = detail_dfs['T34'].copy()
+        _d34['grupo_dup_h1'] = _d34.groupby(_d34[_h1c].str.lower().str.strip()).ngroup() + 1
+        detail_dfs['T34'] = _d34.sort_values('grupo_dup_h1')
+
+
+    # ──────────────────────────────────────────────────────────────────────────────
     # 7. URLs-PRIORIDAD
     # ──────────────────────────────────────────────────────────────────────────────
     print("\nBuilding URLs-Prioridad...")
@@ -2713,11 +2898,21 @@ def run_audit(cfg, ruta_csv, output_path):
             # Tareas
             'tasks_list': [
                 {
-                    'id':       t['ID'],
-                    'priority': t['Prioridad'],
-                    'category': t['Categoría'],
-                    'task':     t['Tarea'],
-                    'evidence': t['Evidencia'][:150],
+                    'id':          t['ID'],
+                    'priority':    t['Prioridad'],
+                    'category':    t['Categoría'],
+                    'task':        t['Tarea'],
+                    'description': t['Descripción corta'],
+                    'evidence':    t['Evidencia'],
+                    'cause':       t['Causa probable'],
+                    'todo':        t['Qué hacer'],
+                    'where':       t['Dónde detectarlo'],
+                    'effort':      t['Esfuerzo'],
+                    'impact':      t['Impacto'],
+                    'risk':        t['Riesgo'],
+                    'responsible': t['Responsable'],
+                    'validation':  t['Validación'],
+                    'urls_sample': t['URLs ejemplo'],
                 }
                 for t in tasks
             ],
@@ -2728,6 +2923,7 @@ def run_audit(cfg, ruta_csv, output_path):
             # Health score
             'health_score': _health_score,
         },
+        'detail_dfs': detail_dfs,
     }
 
 
