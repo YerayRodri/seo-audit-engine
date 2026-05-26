@@ -19,7 +19,7 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 | Archivo | Líneas aprox. | Responsabilidad |
 |---|---|---|
 | `app.py` | ~1220 | UI Streamlit: formulario, CSS, dashboard, 4 tabs |
-| `audit_engine.py` | ~2850 | Motor de análisis: T01–T48, output Excel, detail_dfs |
+| `audit_engine.py` | ~2870 | Motor de análisis: T01–T48, output Excel, detail_dfs |
 | `requirements.txt` | — | Dependencias |
 | `config_newcop.py` | — | Config de cliente de ejemplo |
 | `knowledge/` | — | Checklists, guías, reglas de priorización |
@@ -259,6 +259,9 @@ input, textarea, select, button { font-family: inherit !important; }
 | `KeyError: indexability` | Nombre normalizado distinto | Siempre usar `df['indexable']` |
 | `NameError: pd` en app.py | Faltaba import | `import pandas as pd` ya añadido |
 | `KeyError: 'impressions'` en T03 | `nlargest('impressions')` sin guard GSC | Guard `_404_has_gsc` antes de nlargest |
+| `TypeError: unexpected keyword argument 'ruta_links_csv'` | Cloud tenía audit_engine.py viejo | Reboot en Streamlit Cloud |
+| All Links `src:None` — 0 matches | SF español exporta `fuente` no `origen` | Añadido `fuente` al parser (`73bf9df`) |
+| All Links `0 matches` pese a columnas OK | URL format mismatch (trailing slash / relativa vs absoluta) | **EN INVESTIGACIÓN** — debug `0c913b9` añade muestra de URLs en log |
 
 ### Posibles fallos en los nuevos checks (T33–T48)
 
