@@ -33,7 +33,7 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 ## Flujo de la herramienta
 
 1. Usuario sube CSV de Screaming Frog (Internal All) — obligatorio
-2. Usuario sube All Links CSV de SF (Bulk Export → All Links) — opcional, enriquece T03/T04
+2. Usuario sube All Links CSV de SF (Bulk Export → All Links) — opcional, enriquece T02/T03/T04/T05/T07/T16/T19/T24/T25/T32/T36
 3. Se auto-detecta plataforma (Shopify / WooCommerce / WordPress / Generic) y locales
 4. `run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None)` ejecuta los 48 checks (T01–T48)
 5. Genera Excel de 4 hojas: Resumen, Tareas, URLs-Prioridad, Oportunidades GSC
@@ -159,10 +159,26 @@ Solo se incluyen las columnas que existen en el DataFrame fuente.
 - `T34` (dup H1 colecciones): columna `grupo_dup_h1`
 
 **Enriquecimiento con All Links CSV** (cuando `ruta_links_csv` se pasa a `run_audit`):
-- `T03` (404s): una fila por enlace entrante → columnas `url_404`, `pagina_origen`, `texto_ancla`, `es_imagen`, `texto_alt` + GSC si disponible
-- `T04` (301s): una fila por enlace entrante → columnas `url_redirect`, `redirige_a`, `pagina_origen`, `texto_ancla`, `es_imagen`, `texto_alt`
 
-El All Links CSV se exporta desde SF → Bulk Export → All Links. Parsing flexible (detecta `Source`/`Destination`/`Anchor`/`Alt Text`/`Type`/`Tag` con varias variantes de nombre).
+Criterio de selección: solo se enriquecen tareas donde conocer el origen del link es necesario para ejecutar el fix. Las tareas de metadatos (T08, T09, T13, etc.) no se enriquecen porque el fix se ejecuta sobre la URL directamente.
+
+| Tarea | Columnas del Excel enriquecido | Razón |
+|---|---|---|
+| T02 (5xx) | `url_5xx`, `pagina_origen`, `texto_ancla`, `es_imagen` | Limpiar/avisar sobre links rotos |
+| T03 (404s) | `url_404`, `pagina_origen`, `texto_ancla`, `es_imagen`, `texto_alt` + GSC | Fix: actualizar o eliminar el link |
+| T04 (301s) | `url_redirect`, `redirige_a`, `pagina_origen`, `texto_ancla`, `es_imagen` | Fix: apuntar el link directamente al destino |
+| T05 (doble slash) | `url_doble_slash`, `pagina_origen`, `texto_ancla`, `es_imagen` | Identificar el template que genera el link con // |
+| T07 (paginación idx.) | `url_paginacion`, `pagina_origen`, `texto_ancla`, `es_imagen` | Añadir nofollow a los links de paginación |
+| T16 (facetas idx.) | `url_faceta`, `pagina_origen`, `texto_ancla`, `es_imagen` | Añadir nofollow a los links de filtros |
+| T19 (302s) | `url_302`, `redirige_a`, `pagina_origen`, `texto_ancla`, `es_imagen` | Igual que T04 pero para redirects temporales |
+| T24 (params idx.) | `url_parametro`, `pagina_origen`, `texto_ancla`, `es_imagen` | Añadir nofollow a links con parámetros |
+| T25 (URLs largas) | `url_larga`, `pagina_origen`, `texto_ancla`, `es_imagen` | Tras renombrar URL, actualizar todos los links internos |
+| T32 (depth > 4) | `url_profunda`, `pagina_origen`, `texto_ancla`, `es_imagen` | Ver el path actual para diseñar el shortcut |
+| T36 (links a noindex) | `pagina_origen`, `url_noindex`, `razon_noindex`, `texto_ancla`, `es_imagen` | El fix ES ir a la página origen y eliminar/nofollow; ordenado por `pagina_origen` para agrupar |
+
+El All Links CSV se exporta desde SF → Exportación en bloque → Enlaces → "Enlaces internos Todo". Parsing flexible (detecta columnas en inglés Y español: `Source`/`Fuente`, `Destination`/`Destino`, `Anchor`/`Ancla`, `Alt Text`/`Texto ALT`, `Type`/`Tipo`).
+
+**CRÍTICO — filtro de tipos**: SF español exporta el tipo de enlace como `Hipervínculo`. El filtro incluye `hipervínculo` e `hipervinculo` (sin tilde). Si SF exporta en otro idioma con un tipo distinto, añadirlo a la lista en la línea ~233 de audit_engine.py.
 
 ---
 
@@ -173,35 +189,53 @@ Funciones relevantes en [app.py](app.py):
 - `detect_locales_from_csv(file_bytes)` — ~línea 125
 - `detect_platform_from_csv(file_bytes)` — ~línea 153
 
+### Session state — resultados persistentes
+
+Los resultados de la auditoría se guardan en `st.session_state.audit_results` justo después de que `run_audit()` completa. Esto evita que descargar un Excel (o cualquier interacción con widgets) resetee la app y obligue a re-ejecutar la auditoría.
+
+```python
+st.session_state.audit_results = {
+    'stats': stats, 'excel_bytes': excel_bytes,
+    'log_lines': log_lines, 'domain_name': domain.strip(), 'fecha': fecha,
+}
+```
+
+El bloque de display (tabs, dashboard, plan de tareas) se activa con `if st.session_state.get('audit_results'):` — completamente separado del `if run_btn:` que ejecuta la auditoría. El botón "🔄 Nueva auditoría" limpia `st.session_state.audit_results` y llama a `st.rerun()`.
+
 ### Estructura de la UI
 
 ```
 ~Línea 21    — PRESETS por plataforma (Shopify, WooCommerce, WordPress, Generic)
-~Línea 256   — CSS personalizado (Inter font, .kpi-card, .seo-hero, expanders)
-~Línea 536   — Hero header HTML
-~Línea 547   — Sección 1: upload Internal All CSV
-~Línea 584   — Sección 1b: upload All Links CSV (opcional)
-~Línea 598   — Sección 2: datos del cliente (dominio, plataforma)
-~Línea 615   — Sección 3: internacionalización
-~Línea 646   — Sección 4: configuración avanzada
-~Línea 726   — Botón "Generar Auditoría" + llamada a run_audit()
-~Línea 810   — Tabs de resultado:
+~Línea 260   — CSS personalizado (Inter font, .kpi-card, .seo-hero, expanders)
+~Línea 540   — Hero header HTML
+~Línea 551   — Sección 1: upload Internal All CSV
+~Línea 588   — Sección 1b: upload All Links CSV (opcional)
+~Línea 602   — Sección 2: datos del cliente (dominio, plataforma)
+~Línea 619   — Sección 3: internacionalización
+~Línea 650   — Sección 4: configuración avanzada
+~Línea 730   — Botón "Generar Auditoría" + llamada a run_audit()
+               → guarda en st.session_state.audit_results
+~Línea 845   — if st.session_state.get('audit_results'): → display completo
+               Botón "🔄 Nueva auditoría" + tabs de resultado:
                tab_dash   — Dashboard SEO
                tab_tasks  — Plan de Tareas (expanders + Excel por tarea)
                tab_dl     — Descargar Excel completo
                tab_log    — Log de ejecución
-~Línea 836   — Dashboard: Health Score, KPIs, inventario, on-page, técnico, GSC
-~Línea 1066  — Resumen Plan de Acción (4 contadores P0/P1/P2/P3)
-~Línea 1089  — TAB Plan de Tareas: expanders + _make_task_excel()
+~Línea 870   — Dashboard: Health Score, KPIs, inventario, on-page, técnico, GSC
+~Línea 1100  — Resumen Plan de Acción (4 contadores P0/P1/P2/P3)
+~Línea 1125  — TAB Plan de Tareas: expanders + _make_task_excel()
 ```
 
 ### Tab Plan de Tareas
 
 Cada tarea se muestra en un `st.expander` con:
-- Columna izquierda: categoría, descripción, causa, qué hacer, dónde detectarlo
-- Columna derecha: esfuerzo, impacto, riesgo, responsable
-- Evidencia y URLs de ejemplo en `st.code`
-- Botón "⬇️ Descargar Excel — TXX" si la tarea tiene DataFrame en `detail_dfs`
+- **Label del expander**: `{icono_prioridad} [TXX] Nombre de la tarea · N URLs`
+- Columna izquierda (3/4): descripción, causa, qué hacer, dónde
+- Columna derecha (1/4): esfuerzo/impacto/riesgo/responsable como **pills de color** (rojo=Alto, amarillo=Medio, verde=Bajo)
+- Validación como caption, evidencia en `st.code`
+- Si la tarea tiene Excel: botón de descarga + métrica "URLs afectadas" al lado
+
+La función `_pill(lbl, val)` se define dentro de `with tab_tasks:` justo antes del loop de prioridades.
 
 El Excel generado (`_make_task_excel`) tiene dos hojas:
 1. **"URLs afectadas"** — DataFrame completo con todas las columnas relevantes
@@ -261,7 +295,7 @@ input, textarea, select, button { font-family: inherit !important; }
 | `KeyError: 'impressions'` en T03 | `nlargest('impressions')` sin guard GSC | Guard `_404_has_gsc` antes de nlargest |
 | `TypeError: unexpected keyword argument 'ruta_links_csv'` | Cloud tenía audit_engine.py viejo | Reboot en Streamlit Cloud |
 | All Links `src:None` — 0 matches | SF español exporta `fuente` no `origen` | Añadido `fuente` al parser (`73bf9df`) |
-| All Links `0 matches` pese a columnas OK | URL format mismatch (trailing slash / relativa vs absoluta) | **EN INVESTIGACIÓN** — debug `0c913b9` añade muestra de URLs en log |
+| All Links `0 matches` pese a columnas OK | SF español exporta tipo como `Hipervínculo` (con tilde), no `hyperlink` — todos los links eran filtrados | Añadido `hipervínculo` e `hipervinculo` al filtro de tipos (`c895d5b`) |
 
 ### Posibles fallos en los nuevos checks (T33–T48)
 
@@ -269,7 +303,8 @@ input, textarea, select, button { font-family: inherit !important; }
 - **T37–T41 — Shopify**: solo se ejecutan si `PLATFORM == 'Shopify'`. Si la auto-detección de plataforma falla, estos checks no aparecen aunque el site sea Shopify.
 - **T42–T48 — Structured Data**: SF no exporta la columna `Structured Data` en todos los modos de crawl. Para habilitarla: SF → Configuration → Spider → Extraction → Structured Data → activar.
 - **T39 — Scoped products**: el regex `/collections/[^/?#]+/products/` puede producir falsos positivos. Revisar si aparecen URLs inesperadas.
-- **All Links CSV — T03/T04**: si SF exporta el All Links con nombres de columna distintos a `Source`/`Destination`/`Anchor`/`Alt Text`/`Type`, el parser flexible intenta detectarlos pero puede fallar silenciosamente (HAS_LINKS queda False, se usa fallback sin origen).
+- **All Links CSV — T02–T36**: si SF exporta el All Links con nombres de columna distintos a los esperados, el parser flexible intenta detectarlos (inglés y español) pero puede fallar silenciosamente (HAS_LINKS queda False, se usa fallback sin origen). Verificar en el log: "All Links CSV cargado: N enlaces". Si N=0 o "no se encontraron columnas", revisar el parser (~línea 201 audit_engine.py).
+- **All Links filtro de tipos**: SF puede exportar con tipos en otros idiomas. Si HAS_LINKS=True pero los matches son 0, revisar si el tipo de enlace está en la lista de la línea ~233 de audit_engine.py.
 
 ---
 
