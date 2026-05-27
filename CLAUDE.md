@@ -36,7 +36,12 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 2. Usuario sube All Links CSV de SF (Bulk Export → All Links) — opcional, enriquece T02/T03/T04/T05/T07/T16/T19/T24/T25/T32/T36
 3. Se auto-detecta plataforma (Shopify / WooCommerce / WordPress / Generic) y locales
 4. `run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None)` ejecuta los 48 checks (T01–T48)
-5. Genera Excel de 4 hojas: Resumen, Tareas, URLs-Prioridad, Oportunidades GSC
+5. Genera Excel con 4 hojas base + N hojas de detalle (una por tarea con datos):
+   - **Resumen** — KPIs y top tareas P0/P1
+   - **Tareas** — listado completo; columna P "Ver datos →" con hipervínculo a la hoja de detalle correspondiente
+   - **URLs - Prioridad** — todas las URLs con su issue principal
+   - **Oportunidades GSC** — URLs con potencial de mejora
+   - **[TXX - Nombre...]** — una hoja por cada tarea que tenga URLs afectadas: ficha de tarea arriba + listado de URLs/enlaces abajo
 6. Dashboard visual con Health Score + KPIs + pestaña Plan de Tareas con Excel por tarea
 
 ---

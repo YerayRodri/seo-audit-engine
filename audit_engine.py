@@ -2793,6 +2793,23 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     print(f"  Resumen: {len(resumen_rows)} filas")
 
+    # Pre-computar nombres de hojas de detalle para hipervínculos en Tareas
+    _task_map_by_id = {t['ID']: t for t in tasks}
+    _PRIO_TAB_COLORS = {'P0': 'C0392B', 'P1': 'E67E22', 'P2': 'F1C40F', 'P3': '27AE60'}
+    _detail_sheet_map = {}  # tid → sheet_name
+    for _tid, _ddf in detail_dfs.items():
+        if _ddf is None or len(_ddf) == 0:
+            continue
+        _tinfo = _task_map_by_id.get(_tid)
+        if not _tinfo:
+            continue
+        _raw = f"{_tid} - {_tinfo['Tarea']}"
+        _sname = _raw[:31]
+        # garantizar nombres únicos
+        if _sname in _detail_sheet_map.values():
+            _sname = _raw[:28] + str(len(_detail_sheet_map))
+        _detail_sheet_map[_tid] = _sname
+
 
     # ──────────────────────────────────────────────────────────────────────────────
     # 10. ESCRITURA DEL EXCEL
@@ -2871,15 +2888,22 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     task_headers = ['ID', 'Prioridad', 'Categoría', 'Tarea', 'Descripción corta', 'Evidencia',
                     'Causa probable', 'Qué hacer', 'Dónde detectarlo', 'Esfuerzo', 'Impacto',
                     'Riesgo', 'Responsable', 'Validación', 'URLs ejemplo']
-    ws_tar.append(task_headers)
+    _n_task_cols = len(task_headers)
+    _link_col_idx = _n_task_cols + 1  # columna P
+    ws_tar.append(task_headers + ['Ver datos →'])
     style_header_row(ws_tar)
+    # Estilo cabecera columna enlace
+    _lhc = ws_tar.cell(row=1, column=_link_col_idx)
+    _lhc.fill = PatternFill('solid', fgColor='27AE60')
+    _lhc.font = Font(bold=True, color=WHITE, size=11, name='Calibri')
+    _lhc.alignment = Alignment(horizontal='center', vertical='center')
 
     for i, task in enumerate(tasks, start=2):
         row_data = [task[h] for h in task_headers]
         ws_tar.append(row_data)
         prio = task['Prioridad']
         fill = PRIO_FILLS.get(prio)
-        for col_idx in range(1, len(task_headers) + 1):
+        for col_idx in range(1, _n_task_cols + 1):
             cell = ws_tar.cell(row=i, column=col_idx)
             if fill:
                 cell.fill = fill
@@ -2891,12 +2915,26 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 cell.font = Font(size=9, name='Calibri', color='1155CC')
             else:
                 cell.alignment = wrap_align
+        # Columna hipervínculo a hoja de detalle
+        _lc = ws_tar.cell(row=i, column=_link_col_idx)
+        _tid = task['ID']
+        if _tid in _detail_sheet_map:
+            _lc.value = '→ Ver datos'
+            _lc.hyperlink = f"#'{_detail_sheet_map[_tid]}'!A1"
+            _lc.font = Font(size=10, name='Calibri', color='1155CC', underline='single')
+        else:
+            _lc.value = '—'
+            _lc.font = Font(size=10, name='Calibri', color='999999')
+        if fill:
+            _lc.fill = fill
+        _lc.border = thin_border
+        _lc.alignment = Alignment(vertical='center', horizontal='center')
         ws_tar.row_dimensions[i].height = 90
 
     set_col_widths(ws_tar, {
         'A': 8, 'B': 10, 'C': 24, 'D': 28, 'E': 34,
         'F': 42, 'G': 28, 'H': 46, 'I': 28, 'J': 10,
-        'K': 10, 'L': 10, 'M': 16, 'N': 28, 'O': 60,
+        'K': 10, 'L': 10, 'M': 16, 'N': 28, 'O': 60, 'P': 14,
     })
     ws_tar.freeze_panes = 'C2'
     ws_tar.sheet_properties.tabColor = 'C0392B'
@@ -2956,6 +2994,102 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     ws_gsc.sheet_properties.tabColor = '27AE60'
 
 
+    # ── HOJAS DE DETALLE POR TAREA ───────────────────────────────────────────────
+    _FICHA_FIELDS = [
+        'ID', 'Prioridad', 'Categoría', 'Tarea', 'Descripción corta',
+        'Causa probable', 'Qué hacer', 'Dónde detectarlo',
+        'Esfuerzo', 'Impacto', 'Riesgo', 'Responsable', 'Validación', 'Evidencia',
+    ]
+    _det_section_fill = PatternFill('solid', fgColor='2C3E50')
+    _det_section_font = Font(bold=True, color=WHITE, size=10, name='Calibri')
+    _det_key_font     = Font(bold=True, size=9, name='Calibri')
+    _det_val_font     = Font(size=9, name='Calibri')
+    _det_val_wrap     = Alignment(vertical='top', wrap_text=True)
+    _det_data_font    = Font(size=9, name='Calibri')
+    _det_url_font     = Font(size=9, name='Calibri', color='1155CC')
+    _det_alt_fill     = PatternFill('solid', fgColor='F0F4F8')
+    _det_head_font    = Font(bold=True, color=WHITE, size=9, name='Calibri')
+    _det_head_align   = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    for _tid, _sname in _detail_sheet_map.items():
+        _ddf    = detail_dfs[_tid]
+        _tinfo  = _task_map_by_id[_tid]
+        _prio   = _tinfo.get('Prioridad', 'P2')
+        _n_data_cols = len(_ddf.columns)
+
+        ws_det = wb.create_sheet(_sname)
+        ws_det.sheet_properties.tabColor = _PRIO_TAB_COLORS.get(_prio, '27AE60')
+
+        # Cabecera de sección — FICHA DE TAREA
+        ws_det.cell(row=1, column=1, value='▌ FICHA DE TAREA').fill = _det_section_fill
+        ws_det.cell(row=1, column=1).font  = _det_section_font
+        ws_det.cell(row=1, column=1).alignment = Alignment(vertical='center')
+        ws_det.cell(row=1, column=2, value='').fill = _det_section_fill
+        ws_det.row_dimensions[1].height = 22
+
+        # Ficha clave-valor (filas 2 a N+1)
+        for _fi, _fkey in enumerate(_FICHA_FIELDS, start=2):
+            _fval = _tinfo.get(_fkey, '')
+            _kc   = ws_det.cell(row=_fi, column=1, value=_fkey)
+            _vc   = ws_det.cell(row=_fi, column=2, value=str(_fval) if _fval else '')
+            _kc.font   = _det_key_font
+            _vc.font   = _det_val_font
+            _kc.alignment = _det_val_wrap
+            _vc.alignment = _det_val_wrap
+            _kc.border = thin_border
+            _vc.border = thin_border
+            if _fi % 2 == 0:
+                _kc.fill = _det_alt_fill
+                _vc.fill = _det_alt_fill
+
+        _ficha_end_row = len(_FICHA_FIELDS) + 1  # última fila de ficha
+
+        # Fila separadora + cabecera sección URLs
+        _sec_row   = _ficha_end_row + 2
+        _head_row  = _sec_row + 1
+        _data_row0 = _head_row + 1
+
+        ws_det.cell(row=_sec_row, column=1, value='▌ URLs AFECTADAS').fill = _det_section_fill
+        ws_det.cell(row=_sec_row, column=1).font  = _det_section_font
+        ws_det.cell(row=_sec_row, column=1).alignment = Alignment(vertical='center')
+        for _mc in range(2, _n_data_cols + 1):
+            ws_det.cell(row=_sec_row, column=_mc, value='').fill = _det_section_fill
+        ws_det.row_dimensions[_sec_row].height = 22
+
+        # Cabeceras de datos
+        _dcols = list(_ddf.columns)
+        for _ci, _cn in enumerate(_dcols, start=1):
+            _hc = ws_det.cell(row=_head_row, column=_ci, value=_cn)
+            _hc.fill      = PatternFill('solid', fgColor=HEADER_BG)
+            _hc.font      = _det_head_font
+            _hc.alignment = _det_head_align
+            _hc.border    = thin_border
+        ws_det.row_dimensions[_head_row].height = 24
+
+        # Filas de datos
+        for _ri, _row in enumerate(_ddf.itertuples(index=False), start=_data_row0):
+            for _ci, _val in enumerate(_row, start=1):
+                _dc = ws_det.cell(row=_ri, column=_ci, value=_val)
+                _dc.border    = thin_border
+                _dc.alignment = Alignment(vertical='top', wrap_text=False)
+                if _ri % 2 == 0:
+                    _dc.fill = _det_alt_fill
+                # columna URL (primera columna): azul
+                if _ci == 1:
+                    _dc.font = _det_url_font
+                else:
+                    _dc.font = _det_data_font
+            ws_det.row_dimensions[_ri].height = 16
+
+        ws_det.freeze_panes = f'A{_data_row0}'
+        # Anchos: col A/B según contenido habitual
+        ws_det.column_dimensions['A'].width = 16
+        ws_det.column_dimensions['B'].width = 70
+        for _ci in range(3, _n_data_cols + 1):
+            ws_det.column_dimensions[get_column_letter(_ci)].width = 28
+
+    print(f"  Hojas de detalle: {len(_detail_sheet_map)} tareas")
+
     # Guardar
     wb.save(OUTPUT_PATH)
     print(f"\n✅ Excel guardado: {OUTPUT_PATH}")
@@ -2964,6 +3098,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     print(f"  Hoja 'Tareas':            {len(tasks) + 1} filas ({len(tasks)} tareas)")
     print(f"  Hoja 'URLs-Prioridad':    {len(url_prio_final) + 1} filas")
     print(f"  Hoja 'Oportunidades GSC': {len(gsc_final) + 1} filas")
+    print(f"  Hojas de detalle:         {len(_detail_sheet_map)} tareas")
 
     # Health score (0-100)
     _p0 = len([t for t in tasks if t['Prioridad'] == 'P0'])
