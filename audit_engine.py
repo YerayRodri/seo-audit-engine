@@ -2225,6 +2225,103 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 _prebuilt_detail_dfs['T05'] = _links_ds
                 print(f"  T05 enriquecido: {len(_links_ds):,} enlaces a URLs con doble slash")
 
+        # T02 — 5xx: quién enlaza a páginas con error de servidor
+        if 'T02' in _task_ids_generated and len(df_5xx) > 0:
+            _urls_5xx = set(df_5xx['url'].str.rstrip('/').tolist())
+            _links_5xx = _df_links[_df_links['link_dest'].isin(_urls_5xx)].copy()
+            if len(_links_5xx) > 0:
+                _links_5xx = _links_5xx.rename(columns={
+                    'link_dest':   'url_5xx',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_5xx = ['url_5xx', 'pagina_origen', 'texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_5xx.columns: _out_5xx.append('texto_alt')
+                _prebuilt_detail_dfs['T02'] = _links_5xx[[c for c in _out_5xx if c in _links_5xx.columns]].reset_index(drop=True)
+                print(f"  T02 enriquecido: {len(_links_5xx):,} enlaces a URLs 5xx")
+
+        # T19 — 302s: quién enlaza a redirects temporales (como T04 pero para 302)
+        if 'T19' in _task_ids_generated and len(df_302) > 0:
+            _urls_302 = set(df_302['url'].str.rstrip('/').tolist())
+            _links_302 = _df_links[_df_links['link_dest'].isin(_urls_302)].copy()
+            if len(_links_302) > 0:
+                _302_extra = ['redirect_url'] if 'redirect_url' in df_302.columns else []
+                _302_meta = df_302[['url'] + _302_extra].rename(columns={'url': 'link_dest', 'redirect_url': 'redirige_a'})
+                _links_302 = _links_302.merge(_302_meta, on='link_dest', how='left')
+                _links_302 = _links_302.rename(columns={
+                    'link_dest':   'url_302',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_302 = ['url_302']
+                if 'redirige_a' in _links_302.columns: _out_302.append('redirige_a')
+                _out_302 += ['pagina_origen', 'texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_302.columns: _out_302.append('texto_alt')
+                _prebuilt_detail_dfs['T19'] = _links_302[[c for c in _out_302 if c in _links_302.columns]].reset_index(drop=True)
+                print(f"  T19 enriquecido: {len(_links_302):,} enlaces a URLs 302")
+
+        # T25 — URLs largas: actualizar todos los links internos tras renombrar
+        if 'T25' in _task_ids_generated and len(df_long_urls) > 0:
+            _urls_long = set(df_long_urls['url'].str.rstrip('/').tolist())
+            _links_long = _df_links[_df_links['link_dest'].isin(_urls_long)].copy()
+            if len(_links_long) > 0:
+                _links_long = _links_long.rename(columns={
+                    'link_dest':   'url_larga',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_long = ['url_larga', 'pagina_origen', 'texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_long.columns: _out_long.append('texto_alt')
+                _prebuilt_detail_dfs['T25'] = _links_long[[c for c in _out_long if c in _links_long.columns]].reset_index(drop=True)
+                print(f"  T25 enriquecido: {len(_links_long):,} enlaces a URLs largas")
+
+        # T36 — Links a noindex: el fix ES ir a la página origen y eliminar/nofollow el link
+        if 'T36' in _task_ids_generated and len(df_noindex_linked) > 0:
+            _urls_noidx = set(df_noindex_linked['url'].str.rstrip('/').tolist())
+            _links_noidx = _df_links[_df_links['link_dest'].isin(_urls_noidx)].copy()
+            if len(_links_noidx) > 0:
+                _noidx_extra = [c for c in ['indexability_status'] if c in df_noindex_linked.columns]
+                _noidx_meta = df_noindex_linked[['url'] + _noidx_extra].rename(
+                    columns={'url': 'link_dest', 'indexability_status': 'razon_noindex'})
+                _links_noidx = _links_noidx.merge(_noidx_meta, on='link_dest', how='left')
+                _links_noidx = _links_noidx.rename(columns={
+                    'link_dest':   'url_noindex',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_noidx = ['pagina_origen', 'url_noindex']
+                if 'razon_noindex' in _links_noidx.columns: _out_noidx.append('razon_noindex')
+                _out_noidx += ['texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_noidx.columns: _out_noidx.append('texto_alt')
+                _prebuilt_detail_dfs['T36'] = _links_noidx[[c for c in _out_noidx if c in _links_noidx.columns]].sort_values('pagina_origen').reset_index(drop=True)
+                print(f"  T36 enriquecido: {len(_links_noidx):,} enlaces a páginas noindex")
+
+        # T07/T16/T24/T32 — URLs indexables problemáticas: saber qué páginas generan esos links
+        for _eid, _edf, _ecol in [
+            ('T07', df_paginaciones_indexable, 'url_paginacion'),
+            ('T16', df_facets,                 'url_faceta'),
+            ('T24', df_parametered,            'url_parametro'),
+            ('T32', df_deep,                   'url_profunda'),
+        ]:
+            if _eid in _task_ids_generated and len(_edf) > 0:
+                _e_urls = set(_edf['url'].str.rstrip('/').tolist())
+                _e_links = _df_links[_df_links['link_dest'].isin(_e_urls)].copy()
+                if len(_e_links) > 0:
+                    _e_links = _e_links.rename(columns={
+                        'link_dest':   _ecol,
+                        'link_source': 'pagina_origen',
+                        'anchor':      'texto_ancla',
+                        'alt_text':    'texto_alt',
+                    })
+                    _e_out = [_ecol, 'pagina_origen', 'texto_ancla', 'es_imagen']
+                    if 'texto_alt' in _e_links.columns: _e_out.append('texto_alt')
+                    _prebuilt_detail_dfs[_eid] = _e_links[[c for c in _e_out if c in _e_links.columns]].reset_index(drop=True)
+                    print(f"  {_eid} enriquecido: {len(_e_links):,} enlaces")
+
     # ── Detail DFs estándar (resto de tareas) ────────────────────────────────────
     detail_dfs = dict(_prebuilt_detail_dfs)
     for _tid, _df_sub in _task_df_map.items():
