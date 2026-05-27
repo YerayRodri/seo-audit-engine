@@ -2208,6 +2208,23 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 _prebuilt_detail_dfs['T04'] = _links_301
                 print(f"  T04 enriquecido: {len(_links_301):,} enlaces a URLs 301")
 
+        # T05 — Doble slash: una fila por enlace entrante (quién enlaza a la URL con //)
+        if 'T05' in _task_ids_generated and len(df_double_slash_all) > 0:
+            _urls_ds = set(df_double_slash_all['url'].str.rstrip('/').tolist())
+            _links_ds = _df_links[_df_links['link_dest'].isin(_urls_ds)].copy()
+            if len(_links_ds) > 0:
+                _links_ds = _links_ds.rename(columns={
+                    'link_dest':   'url_doble_slash',
+                    'link_source': 'pagina_origen',
+                    'anchor':      'texto_ancla',
+                    'alt_text':    'texto_alt',
+                })
+                _out_cols_ds = ['url_doble_slash', 'pagina_origen', 'texto_ancla', 'es_imagen']
+                if 'texto_alt' in _links_ds.columns: _out_cols_ds.append('texto_alt')
+                _links_ds = _links_ds[[c for c in _out_cols_ds if c in _links_ds.columns]].reset_index(drop=True)
+                _prebuilt_detail_dfs['T05'] = _links_ds
+                print(f"  T05 enriquecido: {len(_links_ds):,} enlaces a URLs con doble slash")
+
     # ── Detail DFs estándar (resto de tareas) ────────────────────────────────────
     detail_dfs = dict(_prebuilt_detail_dfs)
     for _tid, _df_sub in _task_df_map.items():
