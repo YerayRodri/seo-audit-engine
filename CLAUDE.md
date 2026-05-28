@@ -67,7 +67,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None): ...  # línea 43
 | T01–T03 | Bloqueos críticos: robots, 5xx, 4xx | Todas | P0 |
 | T04–T07 | Redirects, doble slash, cart, paginación | Todas | P1 |
 | T08–T14 | Meta descriptions, H1, titles, canonicals | Todas | P1–P2 |
-| T15–T20 | Thin content, hreflang, interlinking | Todas | P1–P2 |
+| T15–T20 | Thin content, hreflang, interlinking, huérfanas | Todas | P1–P2 |
 | T21–T32 | Sitemaps, speed, params, URLs largas, depth | Todas | P1–P2 |
 | T33 | H1 duplicado en fichas de producto | Todas | P2 |
 | T34 | H1 duplicado en colecciones/categorías | Todas | P2 |
@@ -100,31 +100,41 @@ La columna SF `Indexability` se normaliza internamente como **`indexable`**:
 - Correcto: `df['indexable']`
 - Incorrecto: `df['indexability']` → KeyError
 
-SF_COL_MAP completo (~línea 119 de audit_engine.py):
+SF_COL_MAP completo (~línea 121 de audit_engine.py). Soporta **inglés y español** — SF exporta en el idioma de la app:
 
-| SF column | Nombre interno |
-|---|---|
-| `Address` | `url` |
-| `Status Code` | `status` |
-| `Indexability` | `indexable` |
-| `Title 1` | `title` |
-| `Title 1 Length` | `title_len` |
-| `Meta Description 1` | `meta_desc` |
-| `Meta Description 1 Length` | `meta_desc_len` |
-| `H1-1` | `h1` |
-| `H2-1` | `h2` |
-| `Canonical Link Element 1` | `canonical` |
-| `Meta Robots 1` | `meta_robots` |
-| `Crawl Depth` | `depth` |
-| `Inlinks` | `inlinks` |
-| `Is In Sitemap` | `in_sitemap` |
-| `Content Type` | `content_type` |
-| `Word Count` | `word_count` |
-| `Size (bytes)` | `size` |
-| `Response Time` | `response_time` |
-| `Indexability Status` | `indexability_status` |
-| `Structured Data` | `structured_data` |
-| `Redirect URL` | `redirect_url` |
+| SF inglés | SF español | Nombre interno |
+|---|---|---|
+| `Address` | `Dirección` | `url` |
+| `Status Code` | `Código de respuesta` | `status` |
+| `Indexability` | `Indexabilidad` | `indexable` |
+| `Indexability Status` | `Estado de indexabilidad` | `indexability_status` |
+| `Content Type` | `Tipo de contenido` | `content_type` |
+| `Title 1` | `Título 1` | `title` |
+| `Title 1 Length` | `Longitud del título 1` | `title_len` |
+| `Title 1 Pixel Width` | `Ancho de píxeles del título 1` | `title_pixel_width` |
+| `Meta Description 1` | `Meta description 1` | `meta_desc` |
+| `Meta Description 1 Length` | `Longitud de la meta description 1` | `meta_desc_len` |
+| `Meta Description 1 Pixel Width` | `Ancho de píxeles de la meta description 1` | `meta_desc_pixel_width` |
+| `H1-1` | `H1-1` | `h1` |
+| `H2-1` | `H2-1` | `h2` |
+| `Canonical Link Element 1` | `Elemento de enlace canónico 1` | `canonical` |
+| `Meta Robots 1` | `Meta robots 1` | `meta_robots` |
+| `Crawl Depth` | `Nivel de profundidad` | `depth` |
+| `Inlinks` | `Inlinks` | `inlinks` |
+| `Unique Inlinks` | `Inlinks únicos` | `unique_inlinks` |
+| `Is In Sitemap` | `En el mapa del sitio` | `in_sitemap` |
+| `Word Count` | `Recuento de palabras` | `word_count` |
+| `Size (bytes)` | `Tamaño (bytes)` | `size` |
+| `Response Time` | `Tiempo de respuesta` | `response_time` |
+| `Structured Data` | `Datos estructurados` | `structured_data` |
+| `Redirect URL` | `URL de redirección` | `redirect_url` |
+| `Nearest Similarity Match` | `Coincidencia de similitud más cercana` | `similarity` |
+| — | `Clics` / `Clicks` | `clicks` |
+| — | `Impresiones` / `Impressions` | `impressions` |
+| — | `Porcentaje de clics` / `CTR` | `ctr` |
+| — | `Posición` / `Position` | `position` |
+
+**CRÍTICO**: Con SF en español en cloud (sin `profiler_csv.py`), el SF_COL_MAP es el único mecanismo de renombrado. Antes del commit `aba754e` los exports en español no detectaban GSC ni inlinks en cloud.
 
 La columna `H1-1` se normaliza como `h1` vía SF_COL_MAP, pero `profiler_csv` puede renombrarla como `h1_1`. Los checks T33/T34 usan `_h1_col` que detecta ambas automáticamente.
 
@@ -152,7 +162,8 @@ Columnas base de cada DataFrame (`_DETAIL_OPT`):
  'title', 'title_len', 'meta_desc', 'meta_desc_len',
  'h1', 'h2', 'canonical', 'meta_robots', 'word_count', 'structured_data',
  'inlinks', 'depth', 'redirect_url', 'response_time',
- 'impressions', 'clicks', 'ctr', 'position']
+ 'impressions', 'clicks', 'ctr', 'position',
+ 'similarity']  # opcional — si SF exporta "Nearest Similarity Match"
 ```
 
 Solo se incluyen las columnas que existen en el DataFrame fuente.
@@ -302,6 +313,7 @@ input, textarea, select, button { font-family: inherit !important; }
 | All Links `src:None` — 0 matches | SF español exporta `fuente` no `origen` | Añadido `fuente` al parser (`73bf9df`) |
 | All Links `0 matches` pese a columnas OK | SF español exporta tipo como `Hipervínculo` (con tilde), no `hyperlink` — todos los links eran filtrados | Añadido `hipervínculo` e `hipervinculo` al filtro de tipos (`c895d5b`) |
 | `Error tokenizing data. Expected N fields, saw M` | SF exporta CSV con columnas extra (GSC + GA4 juntos) o celdas con comas sin escapar — el C parser de pandas falla | `on_bad_lines='warn'` en ambos `read_csv` (Internal All y All Links): filas malformadas se saltan con aviso, la auditoría continúa (`813408e`) |
+| GSC no detectado / inlinks=0 con SF en español en cloud | SF en español exporta `Impresiones`, `Clics`, `Inlinks`, `Nivel de profundidad`, etc. — SF_COL_MAP solo tenía nombres en inglés, así que en cloud ninguna columna española se mapeaba | SF_COL_MAP ampliado con todas las columnas en español (`aba754e`) — ver tabla completa en sección Convención de columnas |
 
 ### Posibles fallos en los nuevos checks (T33–T48)
 
@@ -350,6 +362,7 @@ Checks habituales: páginas de autor indexables, archivos año/mes indexables, `
 
 - **Cadenas de redirect**: columna `redirect_url` ya en Internal All (ya en SF_COL_MAP) → construir grafo A→B→C
 - **Canonical chains/loops**: cruzar columna `canonical` consigo misma → detectar loops y cadenas
+- **Similaridad de contenido**: columna `similarity` ya mapeada (`Nearest Similarity Match` / `Coincidencia de similitud más cercana`). Páginas con `similarity > 90` son near-duplicates. Requiere que SF exporte con opción "Near Duplicates" activada: SF → Configuration → Spider → Content → Near Duplicates.
 
 ### Mejoras de arquitectura pendientes
 
