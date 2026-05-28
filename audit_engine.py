@@ -112,7 +112,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     SF_LANG      = pf['lang']
 
     print(f"\nLoading CSV ({RUTA_CSV.split('/')[-1]})...")
-    df_raw = pd.read_csv(RUTA_CSV, low_memory=False, encoding='utf-8-sig')
+    df_raw = pd.read_csv(RUTA_CSV, low_memory=False, encoding='utf-8-sig', on_bad_lines='warn')
     # Limpiar BOM y espacios en nombres de columna
     df_raw.columns = [c.strip().lstrip('\ufeff') for c in df_raw.columns]
     df_raw.rename(columns=RENAME, inplace=True)
@@ -194,7 +194,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         try:
             for _enc in ('utf-8', 'latin-1', 'utf-8-sig'):
                 try:
-                    _links_raw = pd.read_csv(ruta_links_csv, encoding=_enc, low_memory=False, dtype=str)
+                    _links_raw = pd.read_csv(ruta_links_csv, encoding=_enc, low_memory=False, dtype=str, on_bad_lines='warn')
                     break
                 except UnicodeDecodeError:
                     continue
