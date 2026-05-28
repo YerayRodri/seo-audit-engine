@@ -196,6 +196,10 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             if col in df_raw.columns:
                 df_raw[col] = df_raw[col].astype(str).str.replace(',', '.', regex=False)
 
+    # Preservar nulos de depth antes del fillna (para detección de huérfanas)
+    if 'depth' in df_raw.columns:
+        df_raw['_depth_was_null'] = pd.to_numeric(df_raw['depth'], errors='coerce').isna()
+
     NUM_COLS = ['status', 'inlinks', 'depth', 'word_count', 'size',
                 'response_time', 'impressions', 'clicks', 'ctr', 'position', 'title_len']
     for col in NUM_COLS:
@@ -583,19 +587,32 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     else:
         df_thin = pd.DataFrame(columns=df.columns)
 
-    # Huérfanas potenciales (0 inlinks internos en páginas SEO indexables)
-    # Con GSC: solo las que tienen tráfico real (priorización)
-    # Sin GSC: todas las de tipo SEO con 0 inlinks (detección completa)
-    if HAS_INLINKS_DATA:
-        _orphan_base = df_indexable[
-            (df_indexable['inlinks'] == 0) &
-            (df_indexable['url_type'].isin(SEO_TYPES))
-        ]
-        df_orphans = _orphan_base[
-            _orphan_base['impressions'] > T_ORPHAN_IMPRESSIONS
-        ] if HAS_GSC else _orphan_base
+    # Huérfanas: HTML+200+indexable sin inlinks internos O sin profundidad de crawl
+    # Señal 1: inlinks=0 — ninguna página enlaza a esta URL
+    # Señal 2: depth=NaN — solo encontrada via sitemap, sin path de enlace desde home
+    _html_mask = (
+        df_indexable['content_type'].str.lower().str.contains('html', na=False)
+        if 'content_type' in df_indexable.columns
+        else pd.Series(True, index=df_indexable.index)
+    )
+    _base_200_html = df_indexable[_html_mask & (df_indexable['status'] == 200)]
+    _orphan_inlinks = (
+        _base_200_html[_base_200_html['inlinks'] == 0]
+        if HAS_INLINKS_DATA
+        else pd.DataFrame(columns=df.columns)
+    )
+    # Señal depth original=NaN (páginas sin camino de enlaces desde la home)
+    # _depth_was_null preserva los nulos antes del fillna(0) aplicado en NUM_COLS
+    HAS_DEPTH_FOR_ORPHANS = '_depth_was_null' in _base_200_html.columns
+    if HAS_DEPTH_FOR_ORPHANS:
+        _orphan_depth = _base_200_html[_base_200_html['_depth_was_null'] == True]
+        _orphan_base = pd.concat([_orphan_inlinks, _orphan_depth]).drop_duplicates(subset='url')
     else:
-        df_orphans = pd.DataFrame(columns=df.columns)
+        _orphan_base = _orphan_inlinks
+    if HAS_GSC and 'impressions' in _orphan_base.columns and len(_orphan_base) > 0:
+        df_orphans = _orphan_base[_orphan_base['impressions'] > T_ORPHAN_IMPRESSIONS]
+    else:
+        df_orphans = _orphan_base
 
     print(f"  302: {len(df_302)} | Sensibles: {len(df_sensitive)} | Facetas: {len(df_facets)}")
     print(f"  Non-self canonical: {len(df_non_self_canonical)} | Thin: {len(df_thin)} | Huérfanas: {len(df_orphans)}")

@@ -315,6 +315,21 @@ input, textarea, select, button { font-family: inherit !important; }
 | `Error tokenizing data. Expected N fields, saw M` | SF exporta CSV con columnas extra (GSC + GA4 juntos) o celdas con comas sin escapar — el C parser de pandas falla | `on_bad_lines='warn'` en ambos `read_csv` (Internal All y All Links): filas malformadas se saltan con aviso, la auditoría continúa (`813408e`) |
 | GSC no detectado / inlinks=0 con SF en español en cloud | SF en español exporta `Impresiones`, `Clics`, `Inlinks`, `Nivel de profundidad`, etc. — SF_COL_MAP solo tenía nombres en inglés, así que en cloud ninguna columna española se mapeaba | SF_COL_MAP ampliado con todas las columnas en español (`aba754e`) — ver tabla completa en sección Convención de columnas |
 
+### T20 — Huérfanas: comportamiento actual y pendiente
+
+**Comportamiento actual (commit `aba754e`):**
+- Detecta páginas HTML indexables con `inlinks = 0` (columna `Inlinks` / `Inlinks`)
+- Con GSC: solo muestra las que tienen impresiones > T_ORPHAN_IMPRESSIONS (100)
+- Sin GSC: muestra TODAS las páginas HTML+200+indexable con inlinks=0
+- Usa `content_type` contains 'html' en lugar de `url_type` para funcionar con cualquier plataforma e idioma
+
+**Pendiente / limitación conocida:**
+- Si TODOS los HTML tienen inlinks ≥ 1, T20 no se activa — es correcto (no hay huérfanas por inlinks)
+- La detección por `depth = null` (como hace el Colab) todavía NO está implementada
+  - `depth = null` detecta páginas encontradas solo vía sitemap XML sin path de enlace interno
+  - Puede ser un tipo diferente de huérfana que `inlinks = 0` no captura
+  - **Fix pendiente**: añadir a T20 la señal `depth.isna()` para HTML+200+indexable donde la columna `depth` esté disponible
+
 ### Posibles fallos en los nuevos checks (T33–T48)
 
 - **T33/T34 — H1 duplicados**: si tanto `h1` como `h1_1` están en el df, `_h1_col` usa `h1_1`. Si ninguno existe, el check no se ejecuta silenciosamente.
