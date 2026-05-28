@@ -301,6 +301,7 @@ input, textarea, select, button { font-family: inherit !important; }
 | `TypeError: unexpected keyword argument 'ruta_links_csv'` | Cloud tenía audit_engine.py viejo | Reboot en Streamlit Cloud |
 | All Links `src:None` — 0 matches | SF español exporta `fuente` no `origen` | Añadido `fuente` al parser (`73bf9df`) |
 | All Links `0 matches` pese a columnas OK | SF español exporta tipo como `Hipervínculo` (con tilde), no `hyperlink` — todos los links eran filtrados | Añadido `hipervínculo` e `hipervinculo` al filtro de tipos (`c895d5b`) |
+| `Error tokenizing data. Expected N fields, saw M` | SF exporta CSV con columnas extra (GSC + GA4 juntos) o celdas con comas sin escapar — el C parser de pandas falla | `on_bad_lines='warn'` en ambos `read_csv` (Internal All y All Links): filas malformadas se saltan con aviso, la auditoría continúa (`813408e`) |
 
 ### Posibles fallos en los nuevos checks (T33–T48)
 
