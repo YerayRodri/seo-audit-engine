@@ -119,19 +119,23 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     # Normalización de columnas Screaming Frog (fallback cuando profiler_csv no aplica)
     SF_COL_MAP = {
+        # ── Inglés (SF en inglés) ─────────────────────────────────────────────
         'Address': 'url',
         'Status Code': 'status',
         'Indexability': 'indexable',
         'Title 1': 'title',
         'Title 1 Length': 'title_len',
+        'Title 1 Pixel Width': 'title_pixel_width',
         'Meta Description 1': 'meta_desc',
         'Meta Description 1 Length': 'meta_desc_len',
+        'Meta Description 1 Pixel Width': 'meta_desc_pixel_width',
         'H1-1': 'h1',
         'H2-1': 'h2',
         'Canonical Link Element 1': 'canonical',
         'Meta Robots 1': 'meta_robots',
         'Crawl Depth': 'depth',
         'Inlinks': 'inlinks',
+        'Unique Inlinks': 'unique_inlinks',
         'Is In Sitemap': 'in_sitemap',
         'Content Type': 'content_type',
         'Word Count': 'word_count',
@@ -139,7 +143,37 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         'Response Time': 'response_time',
         'Indexability Status': 'indexability_status',
         'Structured Data': 'structured_data',
-        'Redirect URL':    'redirect_url',
+        'Redirect URL': 'redirect_url',
+        'Nearest Similarity Match': 'similarity',
+        # ── Español (SF en español) ───────────────────────────────────────────
+        'Dirección': 'url',
+        'Código de respuesta': 'status',
+        'Indexabilidad': 'indexable',
+        'Estado de indexabilidad': 'indexability_status',
+        'Tipo de contenido': 'content_type',
+        'Título 1': 'title',
+        'Longitud del título 1': 'title_len',
+        'Ancho de píxeles del título 1': 'title_pixel_width',
+        'Meta description 1': 'meta_desc',
+        'Longitud de la meta description 1': 'meta_desc_len',
+        'Ancho de píxeles de la meta description 1': 'meta_desc_pixel_width',
+        'Meta robots 1': 'meta_robots',
+        'Elemento de enlace canónico 1': 'canonical',
+        'Nivel de profundidad': 'depth',
+        'Enlaces internos': 'inlinks',
+        'Enlaces internos únicos': 'unique_inlinks',
+        'En el mapa del sitio': 'in_sitemap',
+        'Recuento de palabras': 'word_count',
+        'Tamaño (bytes)': 'size',
+        'Tiempo de respuesta': 'response_time',
+        'Datos estructurados': 'structured_data',
+        'URL de redirección': 'redirect_url',
+        'Coincidencia de similitud más cercana': 'similarity',
+        # GSC en español
+        'Clics': 'clicks',
+        'Impresiones': 'impressions',
+        'Porcentaje de clics': 'ctr',
+        'Posición': 'position',
     }
     sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
     if sf_rename:
@@ -549,13 +583,17 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     else:
         df_thin = pd.DataFrame(columns=df.columns)
 
-    # Huérfanas potenciales (tráfico GSC pero 0 inlinks internos)
-    if HAS_GSC and HAS_INLINKS_DATA:
-        df_orphans = df_indexable[
-            (df_indexable['impressions'] > T_ORPHAN_IMPRESSIONS) &
+    # Huérfanas potenciales (0 inlinks internos en páginas SEO indexables)
+    # Con GSC: solo las que tienen tráfico real (priorización)
+    # Sin GSC: todas las de tipo SEO con 0 inlinks (detección completa)
+    if HAS_INLINKS_DATA:
+        _orphan_base = df_indexable[
             (df_indexable['inlinks'] == 0) &
             (df_indexable['url_type'].isin(SEO_TYPES))
         ]
+        df_orphans = _orphan_base[
+            _orphan_base['impressions'] > T_ORPHAN_IMPRESSIONS
+        ] if HAS_GSC else _orphan_base
     else:
         df_orphans = pd.DataFrame(columns=df.columns)
 
@@ -1393,34 +1431,60 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             sample_urls(df_302, sort_by='inlinks' if HAS_INLINKS_DATA else 'url')
         )
 
-    # T20 — Huérfanas potenciales (P2, requiere GSC + inlinks)
+    # T20 — Huérfanas (P2, requiere inlinks; con GSC prioriza por tráfico)
     n_orphans = len(df_orphans)
     if n_orphans > 0:
-        top_orphan_url  = df_orphans.nlargest(1, 'impressions').iloc[0]['url']
-        top_orphan_impr = int(df_orphans['impressions'].max())
+        if HAS_GSC and 'impressions' in df_orphans.columns and df_orphans['impressions'].sum() > 0:
+            _top_url  = df_orphans.nlargest(1, 'impressions').iloc[0]['url']
+            _top_impr = int(df_orphans['impressions'].max())
+            _t20_desc = (
+                f'{n_orphans:,} páginas SEO tienen impresiones en Google (>{T_ORPHAN_IMPRESSIONS:,}) '
+                'pero 0 inlinks internos. Google las encuentra pero el sitio no las enlaza.'
+            )
+            _t20_evid = (
+                f'{n_orphans:,} URLs con más de {T_ORPHAN_IMPRESSIONS:,} impresiones en GSC '
+                f'y 0 inlinks internos en SF. '
+                f'La de mayor volumen: {_top_url} ({_top_impr:,} impresiones). '
+                '0 inlinks = Google trabaja solo para encontrarlas, sin apoyo de la arquitectura.'
+            )
+            _t20_donde = (
+                'SF > All URLs > filtrar Unique Inlinks = 0 + Indexabilidad = Indexable. '
+                'Cruzar con GSC > Rendimiento > Páginas ordenado por Impresiones.'
+            )
+            _t20_sample = sample_urls(df_orphans.sort_values('impressions', ascending=False))
+        else:
+            _t20_desc = (
+                f'{n_orphans:,} páginas SEO (productos, posts, páginas) con 0 inlinks internos. '
+                'Ninguna otra página del sitio las enlaza — son invisibles para el crawl de Google.'
+            )
+            _t20_evid = (
+                f'{n_orphans:,} URLs de tipo SEO con Inlinks = 0 en SF. '
+                'Sin inlinks internos, Google solo puede descubrirlas por sitemap o GSC. '
+                'No reciben PageRank interno ni señal de importancia desde la arquitectura.'
+            )
+            _t20_donde = (
+                'SF > All URLs > filtrar Unique Inlinks = 0 + Indexabilidad = Indexable + '
+                'Content Type = text/html.'
+            )
+            _t20_sample = sample_urls(df_orphans)
         add_task(
             'T20', 'P2', 'Enlazado Interno / Huérfanas',
-            f'Enlazar {n_orphans:,} páginas huérfanas con tráfico GSC pero sin inlinks internos',
-            f'{n_orphans:,} páginas SEO tienen impresiones en Google (>{T_ORPHAN_IMPRESSIONS:,}) '
-            'pero 0 inlinks internos. Google las encuentra pero el sitio no las enlaza.',
-            f'{n_orphans:,} URLs con más de {T_ORPHAN_IMPRESSIONS:,} impresiones en GSC '
-            f'y 0 inlinks internos en SF. '
-            f'La de mayor volumen: {top_orphan_url} ({top_orphan_impr:,} impresiones). '
-            '0 inlinks = Google trabaja solo para encontrarlas, sin apoyo de la arquitectura.',
+            f'Enlazar {n_orphans:,} páginas huérfanas sin inlinks internos',
+            _t20_desc,
+            _t20_evid,
             'Páginas creadas y olvidadas sin actualizar la navegación. '
             'Productos o posts sin categoría asignada. '
             'URLs antiguas que sobrevivieron a una migración sin preservar el enlazado.',
-            '1. Exportar este listado y priorizar por impresiones. '
-            '2. Para las 10-15 URLs con más impresiones: identificar 2-3 páginas '
+            '1. Exportar este listado y ordenar por impresiones (o inlinks si no hay GSC). '
+            '2. Para las 10-15 URLs más importantes: identificar 2-3 páginas '
             'con autoridad (categorías padre, homepage, posts relacionados) que puedan enlazarlas. '
             '3. Añadir los enlaces con anchor text descriptivo y relevante. '
             '4. Si la URL no debería existir (contenido obsoleto): redirigir o añadir noindex.',
-            "SF > All URLs > filtrar Unique Inlinks = 0 + Indexabilidad = Indexable. "
-            "Cruzar con GSC > Rendimiento > Páginas ordenado por Impresiones.",
+            _t20_donde,
             'Bajo', 'Alto', 'Bajo', 'SEO + Dev',
             f'Re-crawl + 30 días: las URLs objetivo tienen ≥3 inlinks internos. '
             'GSC: mejora de posición media en las URLs enlazadas.',
-            sample_urls(df_orphans.sort_values('impressions', ascending=False))
+            _t20_sample
         )
 
     # T21 — URLs no-indexables en el sitemap XML (P1)
