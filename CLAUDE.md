@@ -100,39 +100,41 @@ La columna SF `Indexability` se normaliza internamente como **`indexable`**:
 - Correcto: `df['indexable']`
 - Incorrecto: `df['indexability']` → KeyError
 
-SF_COL_MAP completo (~línea 121 de audit_engine.py). Soporta **inglés y español** — SF exporta en el idioma de la app:
+SF_COL_MAP completo (~línea 121 de audit_engine.py). Soporta **inglés, español y francés** — SF exporta en el idioma de la app:
 
-| SF inglés | SF español | Nombre interno |
-|---|---|---|
-| `Address` | `Dirección` | `url` |
-| `Status Code` | `Código de respuesta` | `status` |
-| `Indexability` | `Indexabilidad` | `indexable` |
-| `Indexability Status` | `Estado de indexabilidad` | `indexability_status` |
-| `Content Type` | `Tipo de contenido` | `content_type` |
-| `Title 1` | `Título 1` | `title` |
-| `Title 1 Length` | `Longitud del título 1` | `title_len` |
-| `Title 1 Pixel Width` | `Ancho de píxeles del título 1` | `title_pixel_width` |
-| `Meta Description 1` | `Meta description 1` | `meta_desc` |
-| `Meta Description 1 Length` | `Longitud de la meta description 1` | `meta_desc_len` |
-| `Meta Description 1 Pixel Width` | `Ancho de píxeles de la meta description 1` | `meta_desc_pixel_width` |
-| `H1-1` | `H1-1` | `h1` |
-| `H2-1` | `H2-1` | `h2` |
-| `Canonical Link Element 1` | `Elemento de enlace canónico 1` | `canonical` |
-| `Meta Robots 1` | `Meta robots 1` | `meta_robots` |
-| `Crawl Depth` | `Nivel de profundidad` | `depth` |
-| `Inlinks` | `Inlinks` | `inlinks` |
-| `Unique Inlinks` | `Inlinks únicos` | `unique_inlinks` |
-| `Is In Sitemap` | `En el mapa del sitio` | `in_sitemap` |
-| `Word Count` | `Recuento de palabras` | `word_count` |
-| `Size (bytes)` | `Tamaño (bytes)` | `size` |
-| `Response Time` | `Tiempo de respuesta` | `response_time` |
-| `Structured Data` | `Datos estructurados` | `structured_data` |
-| `Redirect URL` | `URL de redirección` | `redirect_url` |
-| `Nearest Similarity Match` | `Coincidencia de similitud más cercana` | `similarity` |
-| — | `Clics` / `Clicks` | `clicks` |
-| — | `Impresiones` / `Impressions` | `impressions` |
-| — | `Porcentaje de clics` / `CTR` | `ctr` |
-| — | `Posición` / `Position` | `position` |
+| SF inglés | SF español | SF francés | Nombre interno |
+|---|---|---|---|
+| `Address` | `Dirección` | `Adresse` | `url` |
+| `Status Code` | `Código de respuesta` | `Code de réponse` | `status` |
+| `Indexability` | `Indexabilidad` | `Indexabilité` | `indexable` |
+| `Indexability Status` | `Estado de indexabilidad` | `État d'indexabilité` | `indexability_status` |
+| `Content Type` | `Tipo de contenido` | `Type de contenu` | `content_type` |
+| `Title 1` | `Título 1` | `Titre 1` | `title` |
+| `Title 1 Length` | `Longitud del título 1` | `Longueur du titre 1` | `title_len` |
+| `Title 1 Pixel Width` | `Ancho de píxeles del título 1` | `Largeur en pixels du titre 1` | `title_pixel_width` |
+| `Meta Description 1` | `Meta description 1` | `Meta Description 1` | `meta_desc` |
+| `Meta Description 1 Length` | `Longitud de la meta description 1` | `Longueur de la méta description 1` | `meta_desc_len` |
+| `Meta Description 1 Pixel Width` | `Ancho de píxeles de la meta description 1` | `Largeur en pixels de la méta description 1` | `meta_desc_pixel_width` |
+| `H1-1` | `H1-1` | `H1-1` | `h1` |
+| `H2-1` | `H2-1` | `H2-1` | `h2` |
+| `Canonical Link Element 1` | `Elemento de enlace canónico 1` | `Élément de lien canonique 1` | `canonical` |
+| `Meta Robots 1` | `Meta robots 1` | `Meta Robots 1` | `meta_robots` |
+| `Crawl Depth` | `Nivel de profundidad` | `Profondeur d'exploration` | `depth` |
+| `Inlinks` | `Inlinks` | `Liens entrants` | `inlinks` |
+| `Unique Inlinks` | `Inlinks únicos` | `Liens entrants uniques` | `unique_inlinks` |
+| `Is In Sitemap` | `En el mapa del sitio` | `Dans le plan du site` | `in_sitemap` |
+| `Word Count` | `Recuento de palabras` | `Nombre de mots` | `word_count` |
+| `Size (bytes)` | `Tamaño (bytes)` | `Taille (octets)` | `size` |
+| `Response Time` | `Tiempo de respuesta` | `Temps de réponse` | `response_time` |
+| `Structured Data` | `Datos estructurados` | `Données structurées` | `structured_data` |
+| `Redirect URL` | `URL de redirección` | `URL de redirection` | `redirect_url` |
+| `Nearest Similarity Match` | `Coincidencia de similitud más cercana` | `Correspondance de similarité la plus proche` | `similarity` |
+| — | `Clics` / `Clicks` | `Clics` | `clicks` |
+| — | `Impresiones` / `Impressions` | `Impressions` | `impressions` |
+| — | `Porcentaje de clics` / `CTR` | `CTR` | `ctr` |
+| — | `Posición` / `Position` | `Position` | `position` |
+
+**Guard de columnas críticas**: si tras el renombrado no existe `status`, la app lanza un `ValueError` con las primeras 10 columnas detectadas para facilitar el diagnóstico.
 
 **CRÍTICO**: Con SF en español en cloud (sin `profiler_csv.py`), el SF_COL_MAP es el único mecanismo de renombrado. Antes del commit `aba754e` los exports en español no detectaban GSC ni inlinks en cloud.
 
@@ -314,6 +316,7 @@ input, textarea, select, button { font-family: inherit !important; }
 | All Links `0 matches` pese a columnas OK | SF español exporta tipo como `Hipervínculo` (con tilde), no `hyperlink` — todos los links eran filtrados | Añadido `hipervínculo` e `hipervinculo` al filtro de tipos (`c895d5b`) |
 | `Error tokenizing data. Expected N fields, saw M` | SF exporta CSV con columnas extra (GSC + GA4 juntos) o celdas con comas sin escapar — el C parser de pandas falla | `on_bad_lines='warn'` en ambos `read_csv` (Internal All y All Links): filas malformadas se saltan con aviso, la auditoría continúa (`813408e`) |
 | GSC no detectado / inlinks=0 con SF en español en cloud | SF en español exporta `Impresiones`, `Clics`, `Inlinks`, `Nivel de profundidad`, etc. — SF_COL_MAP solo tenía nombres en inglés, así que en cloud ninguna columna española se mapeaba | SF_COL_MAP ampliado con todas las columnas en español (`aba754e`) — ver tabla completa en sección Convención de columnas |
+| `KeyError: 'status'` con SF en francés | SF en francés exporta `Code de réponse` en lugar de `Status Code` — no estaba en SF_COL_MAP | SF_COL_MAP ampliado con columnas en francés + guard `ValueError` con columnas detectadas si `status` sigue ausente |
 
 ### T20 — Huérfanas: comportamiento actual y pendiente
 

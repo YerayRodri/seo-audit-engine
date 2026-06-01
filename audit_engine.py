@@ -174,11 +174,47 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         'Impresiones': 'impressions',
         'Porcentaje de clics': 'ctr',
         'Posición': 'position',
+        # ── Francés (SF en francés) ───────────────────────────────────────────
+        'Adresse': 'url',
+        'Code de réponse': 'status',
+        'Indexabilité': 'indexable',
+        "État d'indexabilité": 'indexability_status',
+        'Type de contenu': 'content_type',
+        'Titre 1': 'title',
+        'Longueur du titre 1': 'title_len',
+        'Largeur en pixels du titre 1': 'title_pixel_width',
+        'Longueur de la méta description 1': 'meta_desc_len',
+        'Largeur en pixels de la méta description 1': 'meta_desc_pixel_width',
+        'Élément de lien canonique 1': 'canonical',
+        "Profondeur d'exploration": 'depth',
+        'Liens entrants': 'inlinks',
+        'Liens entrants uniques': 'unique_inlinks',
+        'Dans le plan du site': 'in_sitemap',
+        'Nombre de mots': 'word_count',
+        'Taille (octets)': 'size',
+        'Temps de réponse': 'response_time',
+        'Données structurées': 'structured_data',
+        'URL de redirection': 'redirect_url',
+        'Correspondance de similarité la plus proche': 'similarity',
+        # GSC en francés
+        'Impressions': 'impressions',
+        'CTR': 'ctr',
+        'Position': 'position',
     }
     sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
     if sf_rename:
         df_raw.rename(columns=sf_rename, inplace=True)
         print(f"  SF columns normalized: {list(sf_rename.keys())}")
+
+    # Guard: columna status imprescindible
+    if 'status' not in df_raw.columns:
+        _cols_sample = list(df_raw.columns[:10])
+        raise ValueError(
+            f"No se encontró la columna 'Status Code' en el CSV. "
+            f"El CSV parece estar en un idioma no soportado todavía. "
+            f"Primeras columnas detectadas: {_cols_sample}. "
+            f"Contacta con soporte indicando estos nombres de columna."
+        )
 
     # Auto-detectar GSC (cuando profiler_csv no está disponible, e.g. cloud)
     if not HAS_GSC:
