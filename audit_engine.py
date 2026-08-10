@@ -2921,6 +2921,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         if not _tinfo:
             continue
         _raw = f"{_tid} - {_tinfo['Tarea']}"
+        _raw = re.sub(r'[/\\*?\[\]:]', '-', _raw)
         _sname = _raw[:31]
         # garantizar nombres únicos
         if _sname in _detail_sheet_map.values():
@@ -3322,6 +3323,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Motor de auditoría SEO genérico')
     parser.add_argument('--config',     required=True, help='Ruta al archivo config_*.py')
     parser.add_argument('--csv',        help='Ruta al CSV (sobreescribe el del config)')
+    parser.add_argument('--links-csv',  help='Ruta al All Links CSV de SF (opcional)')
     parser.add_argument('--output-dir', help='Directorio de salida (sobreescribe el del config)')
     args = parser.parse_args()
 
@@ -3331,6 +3333,7 @@ if __name__ == '__main__':
     _domain     = _cfg.DOMAIN
     _fecha      = datetime.now().strftime('%Y%m%d')
     _output_path = f"{_output_dir}/auditoria-seo-{_domain}-{_fecha}.xlsx"
+    _ruta_links = args.links_csv or getattr(_cfg, 'RUTA_LINKS_CSV', None)
 
     print(f"Config  : {args.config}")
-    run_audit(_cfg, _ruta_csv, _output_path)
+    run_audit(_cfg, _ruta_csv, _output_path, ruta_links_csv=_ruta_links)
