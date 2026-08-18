@@ -200,6 +200,29 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         'Impressions': 'impressions',
         'CTR': 'ctr',
         'Position': 'position',
+        # ── Columnas adicionales (mismo nombre en EN/ES salvo indicado) ────────
+        'X-Robots-Tag 1': 'x_robots',
+        'Meta Refresh 1': 'meta_refresh',
+        'H1-2': 'h1_2',
+        'H2-2': 'h2_2',
+        'Link Score': 'link_score',
+        'Hash': 'hash',
+        'HTTP Version': 'http_version',
+        'Versión HTTP': 'http_version',
+        'Redirect Type': 'redirect_type',
+        'Tipo de redirección': 'redirect_type',
+        'Type de redirection': 'redirect_type',
+        'Folder Depth': 'folder_depth',
+        'Profundidad de carpeta': 'folder_depth',
+        'Text Ratio': 'text_ratio',
+        'Proporción de texto': 'text_ratio',
+        'Outlinks': 'outlinks',
+        'Enlaces salientes': 'outlinks',
+        'External Outlinks': 'external_outlinks',
+        'Enlaces salientes externos': 'external_outlinks',
+        'No. Near Duplicates': 'near_duplicates',
+        'Semiduplicados (N.º)': 'near_duplicates',
+        'Meta Keywords 1': 'meta_keywords',
     }
     sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
     if sf_rename:
@@ -237,7 +260,8 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         df_raw['_depth_was_null'] = pd.to_numeric(df_raw['depth'], errors='coerce').isna()
 
     NUM_COLS = ['status', 'inlinks', 'depth', 'word_count', 'size',
-                'response_time', 'impressions', 'clicks', 'ctr', 'position', 'title_len']
+                'response_time', 'impressions', 'clicks', 'ctr', 'position', 'title_len',
+                'link_score', 'folder_depth', 'outlinks', 'external_outlinks', 'near_duplicates']
     for col in NUM_COLS:
         if col in df_raw.columns:
             df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce').fillna(0)
@@ -258,11 +282,21 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     # Verificar inlinks con datos reales
     HAS_INLINKS_DATA = 'inlinks' in df.columns and df['inlinks'].sum() > 0
 
+    # Señales adicionales de SF — cada una condiciona sus propios checks.
+    # Link Score solo se rellena si se ejecutó Crawl Analysis en SF.
+    HAS_LINK_SCORE   = 'link_score' in df.columns and df['link_score'].sum() > 0
+    HAS_XROBOTS      = 'x_robots' in df.columns
+    HAS_META_REFRESH = 'meta_refresh' in df.columns
+    HAS_H1_2         = 'h1_2' in df.columns
+    HAS_HASH         = 'hash' in df.columns and df['hash'].notna().sum() > 0
+
     print(f"  Filas raw: {len(df_raw):,} → HTML: {len(df):,}")
     print(f"  GSC: {HAS_GSC} | Inlinks: {HAS_INLINKS_DATA}")
 
     # ── All Links CSV (opcional — enriquece T03/T04 con origen del enlace) ────────
     HAS_LINKS = False
+    HAS_FOLLOW_DATA = False
+    HAS_LINK_POSITION = False
     _df_links = None
     if ruta_links_csv:
         try:
@@ -291,13 +325,25 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 'type', 'link_type', 'tipo', 'tipo_enlace')), None)
             _ltag = next((c for c in _links_raw.columns if c in (
                 'tag', 'element', 'html_tag', 'etiqueta')), None)
-            print(f"  All Links columnas mapeadas → src:{_lsrc} dst:{_ldst} anc:{_lanc} typ:{_ltyp}")
+            # Follow / nofollow del enlace (SF: "Follow" / "Seguir")
+            _lfol = next((c for c in _links_raw.columns if c in (
+                'follow', 'seguir', 'suivre')), None)
+            # Posición del enlace en el HTML (SF: "Link Position" / "Posición del enlace")
+            _lpos = next((c for c in _links_raw.columns if c in (
+                'link_position', 'posición_del_enlace', 'posicion_del_enlace',
+                'position_du_lien')), None)
+            _lrel = next((c for c in _links_raw.columns if c in ('rel', 'atributo_rel')), None)
+            print(f"  All Links columnas mapeadas → src:{_lsrc} dst:{_ldst} anc:{_lanc} typ:{_ltyp} "
+                  f"follow:{_lfol} pos:{_lpos}")
             if _lsrc and _ldst:
                 _rename_l = {_lsrc: 'link_source', _ldst: 'link_dest'}
                 if _lanc: _rename_l[_lanc] = 'anchor'
                 if _lalt: _rename_l[_lalt] = 'alt_text'
                 if _ltyp: _rename_l[_ltyp] = 'link_type'
                 if _ltag: _rename_l[_ltag] = 'link_tag'
+                if _lfol: _rename_l[_lfol] = 'follow'
+                if _lpos: _rename_l[_lpos] = 'link_position'
+                if _lrel: _rename_l[_lrel] = 'link_rel'
                 _df_links = _links_raw.rename(columns=_rename_l).copy()
                 # Normalizar URLs (quitar trailing slash para matching consistente)
                 _df_links['link_source'] = _df_links['link_source'].astype(str).str.strip().str.rstrip('/')
@@ -323,8 +369,20 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                         (_df_links['alt_text'].astype(str).str.lower() != 'nan')
                     )
                 _df_links['es_imagen'] = _img_mask
+                # Follow real del enlace — SF exporta True/False (o Verdadero/Falso)
+                if 'follow' in _df_links.columns:
+                    _df_links['es_follow'] = ~_df_links['follow'].astype(str).str.strip().str.lower().isin(
+                        ['false', 'falso', 'faux', 'no', '0', 'nofollow'])
+                # Posición del enlace: solo "Contenido" transmite autoridad editorial;
+                # header/footer/nav/head/aside son boilerplate repetido en todo el site.
+                if 'link_position' in _df_links.columns:
+                    _pos_norm = _df_links['link_position'].astype(str).str.strip().str.lower()
+                    _df_links['es_contextual'] = _pos_norm.isin(['content', 'contenido', 'contenu'])
+                HAS_FOLLOW_DATA   = 'es_follow' in _df_links.columns
+                HAS_LINK_POSITION = 'es_contextual' in _df_links.columns
                 HAS_LINKS = True
-                print(f"  All Links CSV cargado: {len(_df_links):,} enlaces")
+                print(f"  All Links CSV cargado: {len(_df_links):,} enlaces "
+                      f"(follow:{HAS_FOLLOW_DATA} posición:{HAS_LINK_POSITION})")
             else:
                 print(f"  All Links CSV: no se encontraron columnas source/destination. Columnas disponibles: {list(_links_raw.columns)}")
         except Exception as _links_err:
@@ -438,7 +496,10 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     # Razones no-indexabilidad
     if 'indexability_status' in df.columns:
-        idx_status = df['indexability_status'].value_counts()
+        # astype(str): si todas las URLs son indexables la columna llega vacía y
+        # pandas la infiere como float → el accesor .str reventaría.
+        idx_status = df['indexability_status'].astype(str).value_counts()
+        idx_status.index = idx_status.index.astype(str)
         total_blocked_robots = int(idx_status[idx_status.index.str.contains('robots', case=False, na=False)].sum())
         total_canonicalized  = int(idx_status[idx_status.index.str.contains('Canoni', case=False, na=False)].sum())
         total_redirects_idx  = int(idx_status[idx_status.index.str.contains('[Rr]edir', na=False)].sum())
@@ -915,6 +976,95 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     print(f"  H1 dup prods: {len(df_dup_h1_products)} | H1 dup colls: {len(df_dup_h1_colls)} | Meta dup: {len(df_dup_meta)}")
     print(f"  Noindex linked: {len(df_noindex_linked)}")
+
+    # ── Pre-cómputos Tanda 1: señales SF infrautilizadas (T49–T56) ────────────────
+
+    _EMPTY = pd.DataFrame(columns=df.columns)
+
+    # T53 — noindex servido por cabecera HTTP X-Robots-Tag (invisible en meta robots)
+    if HAS_XROBOTS:
+        df_xrobots_noindex = df[
+            df['x_robots'].astype(str).str.contains('noindex', case=False, na=False)
+        ]
+    else:
+        df_xrobots_noindex = _EMPTY
+
+    # T54 — Meta refresh (redirect por HTML, no respetado igual que un 301)
+    if HAS_META_REFRESH:
+        _mr = df['meta_refresh'].astype(str).str.strip()
+        df_meta_refresh = df[df['meta_refresh'].notna() & (_mr != '') & (_mr.str.lower() != 'nan')]
+    else:
+        df_meta_refresh = _EMPTY
+
+    # T55 — Más de un H1 en páginas SEO indexables
+    if HAS_H1_2:
+        _h12 = df_seo['h1_2'].astype(str).str.strip()
+        df_multi_h1 = df_seo[df_seo['h1_2'].notna() & (_h12 != '') & (_h12.str.lower() != 'nan')]
+    else:
+        df_multi_h1 = _EMPTY
+
+    # T56 — Contenido byte-idéntico entre páginas indexables (mismo Hash de SF)
+    if HAS_HASH:
+        _hash_scope = df_indexable[df_indexable['status'] == 200].copy()
+        _hv = _hash_scope['hash'].astype(str).str.strip()
+        _hash_scope = _hash_scope[(_hv != '') & (_hv.str.lower() != 'nan')]
+        df_dup_hash = _hash_scope[_hash_scope['hash'].duplicated(keep=False)]
+    else:
+        df_dup_hash = _EMPTY
+
+    # ── Checks basados en el All Links: follow y posición del enlace ──────────────
+    df_no_contextual = _EMPTY
+    _links_pag_follow = _links_facet_follow = _links_sensitive_follow = None
+    n_links_contextual = n_links_boilerplate = 0
+
+    if HAS_LINKS and _df_links is not None:
+        # Solo hipervínculos reales: las imágenes enlazadas no cuentan como enlace
+        # editorial y el heurístico es_imagen usa alt_text, que da falsos positivos.
+        _hl = _df_links
+        if 'link_type' in _hl.columns:
+            _lt = _hl['link_type'].astype(str).str.lower().str.strip()
+            _hl = _hl[_lt.isin(['href', 'hyperlink', 'enlace', 'hipervínculo', 'hipervinculo'])]
+        else:
+            _hl = _hl[~_hl['es_imagen']]
+
+        # T52 — Páginas SEO que solo reciben enlaces de boilerplate (footer/header/nav).
+        # No son huérfanas para T20 (tienen inlinks > 0) pero no reciben ni un enlace
+        # editorial, que es lo que de verdad transmite relevancia.
+        if HAS_LINK_POSITION and len(df_seo) > 0:
+            _ctx = _hl[_hl['es_contextual']]
+            if HAS_FOLLOW_DATA:
+                _ctx = _ctx[_ctx['es_follow']]
+            n_links_contextual = len(_hl[_hl['es_contextual']])
+            n_links_boilerplate = len(_hl) - n_links_contextual
+            _ctx_dests = set(_ctx['link_dest'].tolist())
+            # La homepage se enlaza desde el logo (header) en todo el site: que no
+            # tenga enlaces contextuales es lo normal, no un problema.
+            _scope_ctx = df_seo[df_seo['url_type'] != 'homepage']
+            _seo_norm = _scope_ctx['url'].astype(str).str.rstrip('/')
+            df_no_contextual = _scope_ctx[~_seo_norm.isin(_ctx_dests)]
+
+        # T49/T50/T51 — enlaces internos que deberían llevar nofollow y no lo llevan
+        if HAS_FOLLOW_DATA:
+            _fol = _hl[_hl['es_follow']]
+
+            _pag_urls = set(df_paginaciones['url'].astype(str).str.rstrip('/').tolist())
+            _links_pag_follow = _fol[_fol['link_dest'].isin(_pag_urls)] if _pag_urls else None
+
+            _mask_facets_all = df['url'].apply(
+                lambda u: bool(re.search(_facet_combined, u, re.I)) if isinstance(u, str) else False)
+            _facet_urls = set(df[_mask_facets_all]['url'].astype(str).str.rstrip('/').tolist())
+            _links_facet_follow = _fol[_fol['link_dest'].isin(_facet_urls)] if _facet_urls else None
+
+            _mask_sens_all = df['url'].apply(
+                lambda u: any(x in u.lower() for x in _SENSITIVE) if isinstance(u, str) else False)
+            _sens_urls = set(df[_mask_sens_all]['url'].astype(str).str.rstrip('/').tolist())
+            _links_sensitive_follow = _fol[_fol['link_dest'].isin(_sens_urls)] if _sens_urls else None
+
+    print(f"  X-Robots noindex: {len(df_xrobots_noindex)} | Meta refresh: {len(df_meta_refresh)} | "
+          f"Multi-H1: {len(df_multi_h1)} | Hash dup: {len(df_dup_hash)}")
+    if HAS_LINK_POSITION:
+        print(f"  Enlaces contextuales: {n_links_contextual:,} | boilerplate: {n_links_boilerplate:,} | "
+              f"páginas SEO sin enlace contextual: {len(df_no_contextual)}")
     if IS_SHOPIFY:
         print(f"  Shopify — collections/all: {len(df_collections_all)} | system: {len(df_system_collections)}")
         print(f"  Shopify — scoped: {len(df_scoped_products)} | tags: {len(df_tag_pages)} | variants: {len(df_variants)}")
@@ -2227,6 +2377,221 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             sample_urls(df_no_breadcrumb_schema, sort_by='impressions')
         )
 
+
+    # ──────────────────────────────────────────────────────────────────────────────
+    # TANDA 1 — Checks sobre señales SF infrautilizadas (T49–T56)
+    # ──────────────────────────────────────────────────────────────────────────────
+
+    def sample_link_dests(df_links_sub, n=5):
+        """URLs destino únicas de un subconjunto del All Links."""
+        if df_links_sub is None or len(df_links_sub) == 0:
+            return 'N/D'
+        return '\n'.join(df_links_sub['link_dest'].drop_duplicates().head(n).tolist())
+
+    # T49 — Enlaces a paginación sin nofollow (P2)
+    n_pag_links_follow = len(_links_pag_follow) if _links_pag_follow is not None else 0
+    if n_pag_links_follow > 0:
+        _n_pag_dest = _links_pag_follow['link_dest'].nunique()
+        add_task(
+            'T49', 'P2', 'Enlazado / Crawl budget',
+            f'Añadir nofollow a {n_pag_links_follow:,} enlaces internos hacia paginación',
+            f'{n_pag_links_follow:,} enlaces internos apuntan a {_n_pag_dest:,} URLs de paginación '
+            'sin atributo rel="nofollow". Cada uno pasa autoridad a páginas que no deberían competir '
+            'en búsqueda y consume presupuesto de rastreo.',
+            f'All Links: {n_pag_links_follow:,} enlaces con Follow=True hacia URLs de paginación. '
+            f'Destinos únicos: {_n_pag_dest:,}.',
+            'Los componentes de paginación del tema/plantilla generan enlaces estándar sin nofollow. '
+            'Es el comportamiento por defecto de la mayoría de CMS y themes.',
+            '1. Localizar el componente/snippet de paginación en la plantilla. '
+            '2. Añadir rel="nofollow" a los enlaces de página 2+ (no a la 1). '
+            '3. Mantener la paginación rastreable si los productos solo son accesibles desde ella — '
+            'nofollow no impide indexar, solo evita transmitir autoridad. '
+            '4. Si las páginas 2+ no aportan valor de búsqueda, valorar además noindex,follow.',
+            'SF > Exportación en bloque > Enlaces > Enlaces internos Todo. Filtrar Destino por el patrón '
+            'de paginación y columna Seguir = True.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-export de All Links: 0 enlaces con Follow=True hacia URLs de paginación.',
+            sample_link_dests(_links_pag_follow)
+        )
+
+    # T50 — Enlaces a facetas/filtros sin nofollow (P1)
+    n_facet_links_follow = len(_links_facet_follow) if _links_facet_follow is not None else 0
+    if n_facet_links_follow > 0:
+        _n_facet_dest = _links_facet_follow['link_dest'].nunique()
+        add_task(
+            'T50', 'P1', 'Enlazado / Crawl budget',
+            f'Añadir nofollow a {n_facet_links_follow:,} enlaces internos hacia filtros y ordenaciones',
+            f'{n_facet_links_follow:,} enlaces internos apuntan a {_n_facet_dest:,} URLs de '
+            'facetas/filtros/ordenación sin nofollow. Son la principal fuente de rastreo infinito '
+            'en ecommerce: cada combinación de filtros genera una URL nueva.',
+            f'All Links: {n_facet_links_follow:,} enlaces con Follow=True hacia URLs de filtros. '
+            f'Destinos únicos: {_n_facet_dest:,}.',
+            'Los widgets de filtrado y los selectores de orden se renderizan como enlaces <a href> '
+            'normales, sin nofollow y sin control de qué combinaciones son rastreables.',
+            '1. Añadir rel="nofollow" a todos los enlaces de filtro y de ordenación. '
+            '2. Valorar renderizarlos como botones con JS (sin href) para que no sean rastreables. '
+            '3. Combinar con noindex + canonical a la categoría limpia en las URLs de faceta. '
+            '4. Reforzar en robots.txt con Disallow de los parámetros de orden, que nunca aportan valor.',
+            'SF > Exportación en bloque > Enlaces > Enlaces internos Todo. Filtrar Destino por parámetros '
+            'de filtro/orden y columna Seguir = True.',
+            'Medio', 'Alto', 'Medio', 'Dev + SEO',
+            'Re-export: 0 enlaces follow a URLs de faceta. GSC > Estadísticas de rastreo: baja el número '
+            'de URLs rastreadas por día sin caer las páginas útiles.',
+            sample_link_dests(_links_facet_follow)
+        )
+
+    # T51 — Enlaces a URLs sensibles sin nofollow (P2)
+    n_sens_links_follow = len(_links_sensitive_follow) if _links_sensitive_follow is not None else 0
+    if n_sens_links_follow > 0:
+        _n_sens_dest = _links_sensitive_follow['link_dest'].nunique()
+        add_task(
+            'T51', 'P2', 'Enlazado / Crawl budget',
+            f'Añadir nofollow a {n_sens_links_follow:,} enlaces hacia carrito, checkout y cuenta',
+            f'{n_sens_links_follow:,} enlaces internos apuntan a {_n_sens_dest:,} URLs de sistema '
+            '(carrito, checkout, login, cuenta, búsqueda interna) sin nofollow. Están en todas las '
+            'plantillas, así que drenan autoridad de forma sistemática en cada página del site.',
+            f'All Links: {n_sens_links_follow:,} enlaces con Follow=True hacia URLs sensibles. '
+            f'Destinos únicos: {_n_sens_dest:,}.',
+            'Los enlaces de cabecera y footer hacia el área de usuario y el carrito se generan sin '
+            'nofollow por defecto en prácticamente todos los themes.',
+            '1. Añadir rel="nofollow" a los enlaces de carrito, checkout, login, registro y cuenta. '
+            '2. Confirmar que esas URLs ya llevan noindex (ver T15). '
+            '3. Bloquear las rutas en robots.txt para cerrar también el rastreo.',
+            'SF > All Links: filtrar Destino por /cart, /checkout, /login, /account, /carrito con Seguir = True.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-export: 0 enlaces follow hacia rutas de sistema.',
+            sample_link_dests(_links_sensitive_follow)
+        )
+
+    # T52 — Páginas SEO sin ningún enlace contextual (P1)
+    n_no_contextual = len(df_no_contextual)
+    if n_no_contextual > 0:
+        _pct_boiler = (n_links_boilerplate / (n_links_contextual + n_links_boilerplate) * 100
+                       if (n_links_contextual + n_links_boilerplate) > 0 else 0)
+        add_task(
+            'T52', 'P1', 'Enlazado / Arquitectura',
+            f'Enlazar desde contenido {n_no_contextual:,} páginas que solo reciben enlaces de plantilla',
+            f'{n_no_contextual:,} páginas SEO indexables no reciben ni un solo enlace desde el cuerpo '
+            'de otra página: todos sus enlaces entrantes vienen de menú, header o footer. '
+            'Para Google son páginas sin respaldo editorial — el enlace de plantilla se repite en todo '
+            'el site y apenas transmite relevancia temática.',
+            f'All Links por posición: {n_links_contextual:,} enlaces en Contenido frente a '
+            f'{n_links_boilerplate:,} en plantilla ({_pct_boiler:.0f}% del enlazado interno es boilerplate). '
+            f'{n_no_contextual:,} páginas SEO sin ningún enlace contextual entrante.',
+            'El enlazado interno se apoya en el menú y el footer en lugar de en enlaces desde textos, '
+            'guías o fichas relacionadas. Es lo que hace que la autoridad interna quede plana: '
+            'todas las páginas reciben lo mismo y ninguna destaca.',
+            '1. Priorizar las páginas de esta lista con impresiones en GSC — ahí el retorno es inmediato. '
+            '2. Añadir enlaces desde el cuerpo de páginas relacionadas: categorías hacia sus productos '
+            'destacados, artículos de blog hacia las categorías que resuelven la intención. '
+            '3. Usar anchor text descriptivo, no "ver más" ni "aquí". '
+            '4. Objetivo razonable: 3+ enlaces contextuales entrantes en las páginas que quieres posicionar. '
+            '5. Si una página no merece ni un enlace desde contenido, plantearse si debe existir.',
+            'SF > Exportación en bloque > Enlaces > Enlaces internos Todo. Columna "Posición del enlace": '
+            'agrupar por Destino y contar cuántos tienen posición = Contenido.',
+            'Alto', 'Alto', 'Bajo', 'SEO + Contenidos',
+            'Re-crawl: cada página objetivo tiene al menos un enlace entrante con Posición = Contenido. '
+            'Subida de Link Score en las páginas trabajadas.',
+            sample_urls(df_no_contextual, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T53 — noindex vía cabecera X-Robots-Tag (P1)
+    n_xrobots = len(df_xrobots_noindex)
+    if n_xrobots > 0:
+        _xr_gsc = ''
+        if HAS_GSC and 'impressions' in df_xrobots_noindex.columns:
+            _xr_imp = int(df_xrobots_noindex['impressions'].sum())
+            if _xr_imp > 0:
+                _xr_gsc = f' Suman {_xr_imp:,} impresiones en GSC pese a estar bloqueadas.'
+        add_task(
+            'T53', 'P1', 'Indexación / Cabeceras',
+            f'Revisar {n_xrobots:,} URLs con noindex servido por cabecera HTTP X-Robots-Tag',
+            f'{n_xrobots:,} URLs devuelven noindex en la cabecera HTTP X-Robots-Tag. '
+            'Es un bloqueo invisible al inspeccionar el HTML: no aparece en la meta robots, '
+            'así que suele pasar desapercibido durante meses.' + _xr_gsc,
+            f'SF > columna X-Robots-Tag 1 contiene "noindex" en {n_xrobots:,} URLs.',
+            'Regla a nivel de servidor, CDN o middleware (nginx, Cloudflare, plugin de seguridad) '
+            'que añade la cabecera. Muy habitual que se herede de un entorno de staging o de una '
+            'configuración temporal que nunca se revirtió.',
+            '1. Revisar la lista y separar lo intencionado de lo accidental. '
+            '2. Para lo accidental: localizar la regla en servidor/CDN y eliminarla. '
+            '3. Verificar con curl -I <url> que ya no aparece X-Robots-Tag: noindex. '
+            '4. Solicitar reindexación en GSC de las URLs recuperadas.',
+            'SF > Internal > columna X-Robots-Tag 1. También con curl -I o DevTools > Network > Headers.',
+            'Bajo', 'Alto', 'Medio', 'Dev + SEO',
+            'curl -I no devuelve X-Robots-Tag: noindex. GSC > Inspección de URL: "La URL puede indexarse".',
+            sample_urls(df_xrobots_noindex, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T54 — Meta refresh (P2)
+    n_meta_refresh = len(df_meta_refresh)
+    if n_meta_refresh > 0:
+        add_task(
+            'T54', 'P2', 'Técnico / Redirects',
+            f'Sustituir {n_meta_refresh:,} meta refresh por redirects 301 de servidor',
+            f'{n_meta_refresh:,} URLs redirigen mediante <meta http-equiv="refresh">. '
+            'Google lo interpreta como una señal débil de redirección: transmite peor la autoridad '
+            'que un 301 y puede tardar mucho más en consolidar el cambio.',
+            f'SF > columna Meta Refresh 1 con valor en {n_meta_refresh:,} URLs.',
+            'Redirecciones implementadas a nivel de plantilla o plugin en lugar de en el servidor, '
+            'normalmente porque era más rápido de aplicar sin tocar configuración.',
+            '1. Identificar el destino de cada meta refresh. '
+            '2. Sustituir por un 301 en servidor (.htaccess, nginx, o el gestor de redirects del CMS). '
+            '3. Eliminar la etiqueta meta refresh del HTML. '
+            '4. Comprobar que no se generan cadenas: origen → destino final en un solo salto.',
+            'SF > Internal > columna Meta Refresh 1.',
+            'Bajo', 'Medio', 'Bajo', 'Dev',
+            'Re-crawl: 0 URLs con Meta Refresh. Las URLs afectadas devuelven 301 directo al destino final.',
+            sample_urls(df_meta_refresh, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T55 — Más de un H1 (P2)
+    n_multi_h1 = len(df_multi_h1)
+    if n_multi_h1 > 0:
+        add_task(
+            'T55', 'P2', 'On-page / Encabezados',
+            f'Dejar un único H1 en {n_multi_h1:,} páginas SEO con varios',
+            f'{n_multi_h1:,} páginas SEO indexables tienen dos o más H1. '
+            'Diluye la señal del encabezado principal y suele indicar que el logo, un slider o un '
+            'módulo promocional está marcado como H1 sin necesidad.',
+            f'SF > columna H1-2 con valor en {n_multi_h1:,} páginas indexables de tipo SEO.',
+            'Plantillas que marcan como H1 elementos que no son el título del contenido: logotipo, '
+            'banner de cabecera, título de un bloque destacado.',
+            '1. Revisar la lista y ver qué elemento genera el segundo H1. '
+            '2. Dejar como H1 solo el título principal del contenido. '
+            '3. Convertir el resto en H2 o en un elemento sin semántica de encabezado (div/span). '
+            '4. Comprobar que el H1 restante contiene la keyword principal de la página.',
+            'SF > Internal > columnas H1-1 y H1-2. Filtrar donde H1-2 no esté vacío.',
+            'Bajo', 'Bajo', 'Bajo', 'Dev',
+            'Re-crawl: columna H1-2 vacía en todas las páginas SEO.',
+            sample_urls(df_multi_h1, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
+    # T56 — Contenido byte-idéntico (P1)
+    n_dup_hash = len(df_dup_hash)
+    if n_dup_hash > 0:
+        _n_hash_groups = df_dup_hash['hash'].nunique()
+        add_task(
+            'T56', 'P1', 'Contenido / Duplicados',
+            f'Resolver {n_dup_hash:,} páginas indexables con contenido idéntico',
+            f'{n_dup_hash:,} URLs indexables comparten contenido byte a byte con otra URL '
+            f'({_n_hash_groups:,} grupos de duplicados). No es contenido "parecido": el HTML es '
+            'exactamente el mismo, así que Google elegirá una y descartará el resto.',
+            f'SF > columna Hash: {n_dup_hash:,} URLs indexables con hash repetido, '
+            f'agrupadas en {_n_hash_groups:,} conjuntos.',
+            'URLs alternativas que sirven la misma página: con y sin parámetros, con y sin barra final, '
+            'variantes de idioma sin traducir, o la misma ficha accesible por varias rutas.',
+            '1. Revisar cada grupo del Excel (columna grupo_dup_hash) y decidir la URL canónica. '
+            '2. Añadir canonical de las duplicadas hacia la elegida. '
+            '3. Si son URLs accesibles por rutas distintas, redirigir con 301 a la canónica. '
+            '4. Corregir los enlaces internos para que apunten directamente a la canónica.',
+            'SF > Internal > columna Hash. Ordenar por Hash y buscar valores repetidos.',
+            'Medio', 'Alto', 'Medio', 'SEO + Dev',
+            'Re-crawl: 0 grupos de hash duplicado entre URLs indexables, o todas las duplicadas '
+            'con canonical apuntando a la principal.',
+            sample_urls(df_dup_hash, sort_by='impressions' if HAS_GSC else 'inlinks')
+        )
+
     print(f"  Total tareas: {len(tasks)}")
 
     # ── Detail DataFrames por tarea (para descargas en la UI) ─────────────────
@@ -2234,9 +2599,12 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         'status', 'indexable', 'indexability_status',
         'title', 'title_len',
         'meta_desc', 'meta_desc_len',
-        'h1', 'h2', 'canonical', 'meta_robots', 'word_count', 'structured_data',
-        'inlinks', 'depth', 'redirect_url', 'response_time',
+        'h1', 'h1_2', 'h2', 'canonical', 'meta_robots', 'x_robots', 'meta_refresh',
+        'word_count', 'text_ratio', 'structured_data', 'hash',
+        'inlinks', 'link_score', 'depth', 'folder_depth', 'outlinks', 'external_outlinks',
+        'redirect_url', 'redirect_type', 'response_time',
         'impressions', 'clicks', 'ctr', 'position',
+        'similarity', 'near_duplicates',
     ]
 
     def _build_detail_df(df_sub):
@@ -2272,6 +2640,9 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         'T43': df_no_rating_products, 'T44': df_no_rating_colls,
         'T45': df_no_org_schema,    'T46': df_no_blogpost_schema,
         'T47': df_no_author_schema, 'T48': df_no_breadcrumb_schema,
+        'T52': df_no_contextual,    'T53': df_xrobots_noindex,
+        'T54': df_meta_refresh,     'T55': df_multi_h1,
+        'T56': df_dup_hash,
     }
 
     _task_ids_generated = {t['ID'] for t in tasks}
@@ -2439,6 +2810,26 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                     _prebuilt_detail_dfs[_eid] = _e_links[[c for c in _e_out if c in _e_links.columns]].reset_index(drop=True)
                     print(f"  {_eid} enriquecido: {len(_e_links):,} enlaces")
 
+        # T49/T50/T51 — enlaces que deberían llevar nofollow: el fix se hace en la
+        # página origen, así que el Excel se ordena por origen para agrupar el trabajo.
+        for _nid, _ndf, _ncol in [
+            ('T49', _links_pag_follow,       'url_paginacion'),
+            ('T50', _links_facet_follow,     'url_filtro'),
+            ('T51', _links_sensitive_follow, 'url_sistema'),
+        ]:
+            if _nid in _task_ids_generated and _ndf is not None and len(_ndf) > 0:
+                _n_links = _ndf.rename(columns={
+                    'link_dest':     _ncol,
+                    'link_source':   'pagina_origen',
+                    'anchor':        'texto_ancla',
+                    'link_position': 'posicion_enlace',
+                    'link_rel':      'rel_actual',
+                })
+                _n_out = ['pagina_origen', _ncol, 'texto_ancla', 'posicion_enlace', 'rel_actual']
+                _n_out = [c for c in _n_out if c in _n_links.columns]
+                _prebuilt_detail_dfs[_nid] = _n_links[_n_out].sort_values('pagina_origen').reset_index(drop=True)
+                print(f"  {_nid} enriquecido: {len(_n_links):,} enlaces sin nofollow")
+
     # ── Detail DFs estándar (resto de tareas) ────────────────────────────────────
     detail_dfs = dict(_prebuilt_detail_dfs)
     for _tid, _df_sub in _task_df_map.items():
@@ -2458,6 +2849,13 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         _d26['grupo_dup_title'] = _d26.groupby(_d26['title'].str.lower().str.strip()).ngroup() + 1
         _sort_26 = ['grupo_dup_title'] + (['impressions'] if 'impressions' in _d26.columns else ['url'])
         detail_dfs['T26'] = _d26.sort_values(_sort_26, ascending=[True] + [False] * (len(_sort_26) - 1))
+
+    # T56 — Contenido idéntico: agrupar por hash para trabajar grupo a grupo
+    if 'T56' in detail_dfs and 'hash' in detail_dfs['T56'].columns:
+        _d56 = detail_dfs['T56'].copy()
+        _d56['grupo_dup_hash'] = _d56.groupby('hash').ngroup() + 1
+        _sort_56 = ['grupo_dup_hash'] + (['impressions'] if 'impressions' in _d56.columns else ['url'])
+        detail_dfs['T56'] = _d56.sort_values(_sort_56, ascending=[True] + [False] * (len(_sort_56) - 1))
 
     # T35 — Meta descriptions duplicadas: agrupar por meta desc
     if 'T35' in detail_dfs and 'meta_desc' in detail_dfs['T35'].columns:
@@ -3258,6 +3656,15 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             'n_no_h2':        len(df_no_h2),
             'n_no_canonical': len(df_no_canonical),
             'n_thin':         len(df_thin),
+            # Enlazado interno (Tanda 1 — requiere All Links con Posición del enlace)
+            'has_link_position':      HAS_LINK_POSITION,
+            'has_follow_data':        HAS_FOLLOW_DATA,
+            'has_link_score':         HAS_LINK_SCORE,
+            'n_links_contextual':     n_links_contextual,
+            'n_links_boilerplate':    n_links_boilerplate,
+            'n_no_contextual':        len(df_no_contextual),
+            'link_score_median':      float(df_seo['link_score'].median()) if HAS_LINK_SCORE and len(df_seo) > 0 else None,
+            'n_low_link_score':       int((df_seo['link_score'] < 10).sum()) if HAS_LINK_SCORE and len(df_seo) > 0 else 0,
             # Técnico
             'has_sitemap_data':       HAS_SITEMAP_DATA,
             'has_response_time':      HAS_RESPONSE_TIME,

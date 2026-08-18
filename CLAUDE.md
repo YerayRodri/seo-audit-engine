@@ -18,8 +18,8 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 
 | Archivo | Líneas aprox. | Responsabilidad |
 |---|---|---|
-| `app.py` | ~1220 | UI Streamlit: formulario, CSS, dashboard, 4 tabs |
-| `audit_engine.py` | ~2870 | Motor de análisis: T01–T48, output Excel, detail_dfs |
+| `app.py` | ~1290 | UI Streamlit: formulario, CSS, dashboard, 4 tabs |
+| `audit_engine.py` | ~3750 | Motor de análisis: T01–T56, output Excel, detail_dfs |
 | `requirements.txt` | — | Dependencias |
 | `.streamlit/config.toml` | — | `maxUploadSize`/`maxMessageSize` = 1024 MB — sube el límite de subida de 200 MB (default) para los All Links CSV de proyectos grandes |
 | `config_newcop.py` | — | Config de cliente de ejemplo |
@@ -36,7 +36,7 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 1. Usuario sube CSV de Screaming Frog (Internal All) — obligatorio
 2. Usuario sube All Links CSV de SF (Bulk Export → All Links) — opcional, enriquece T02/T03/T04/T05/T07/T16/T19/T24/T25/T32/T36
 3. Se auto-detecta plataforma (Shopify / WooCommerce / WordPress / Generic) y locales
-4. `run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None)` ejecuta los 48 checks (T01–T48)
+4. `run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None)` ejecuta los 56 checks (T01–T56)
 5. Genera Excel con 4 hojas base + N hojas de detalle (una por tarea con datos):
    - **Resumen** — KPIs y top tareas P0/P1
    - **Tareas** — listado completo; columna P "Ver datos →" con hipervínculo a la hoja de detalle correspondiente
@@ -53,7 +53,7 @@ Dos funciones públicas en [audit_engine.py](audit_engine.py):
 
 ```python
 def load_config(config_path): ...   # línea 32 — carga config de cliente
-def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None): ...  # línea 43 — ejecuta T01–T48
+def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None): ...  # línea 43 — ejecuta T01–T56
 ```
 
 `run_audit` retorna `dict` con claves:
@@ -61,7 +61,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None): ...  # línea 43
 - `dashboard` — dict con todos los KPIs y `tasks_list` (lista con todos los campos de cada tarea)
 - `detail_dfs` — dict `{task_id: DataFrame}` con URLs afectadas por tarea (para Excel descargables)
 
-### Checks T01–T48
+### Checks T01–T56
 
 | Rango | Categoría | Plataforma | Prioridad |
 |---|---|---|---|
@@ -86,8 +86,20 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None): ...  # línea 43
 | T46 | BlogPosting schema ausente en artículos de blog | Todas* | P2 |
 | T47 | Person/Author schema ausente en artículos de blog | Todas* | P2 |
 | T48 | BreadcrumbList ausente en productos y colecciones | Todas* | P2 |
+| T49 | Enlaces internos a paginación sin `nofollow` | Todas† | P2 |
+| T50 | Enlaces internos a facetas/filtros/orden sin `nofollow` | Todas† | P1 |
+| T51 | Enlaces internos a carrito/checkout/cuenta sin `nofollow` | Todas† | P2 |
+| T52 | Páginas SEO que solo reciben enlaces de plantilla (0 enlaces contextuales) | Todas† | P1 |
+| T53 | `noindex` servido por cabecera HTTP `X-Robots-Tag` | Todas‡ | P1 |
+| T54 | Meta refresh en lugar de 301 | Todas‡ | P2 |
+| T55 | Más de un H1 en páginas SEO | Todas‡ | P2 |
+| T56 | Contenido byte-idéntico entre indexables (mismo `Hash`) | Todas‡ | P1 |
 
 *T42–T48 solo se ejecutan si el CSV exporta la columna `Structured Data` (SF la incluye cuando se habilita en la configuración del crawl).
+
+†T49–T52 requieren el **All Links CSV** con las columnas `Seguir` (Follow) y `Posición del enlace` (Link Position). T52 además excluye la homepage: se enlaza desde el logo (header) por diseño.
+
+‡T53–T56 requieren que el Internal All exporte `X-Robots-Tag 1`, `Meta Refresh 1`, `H1-2` y `Hash` respectivamente. Si la columna falta o viene vacía, el check no se ejecuta.
 
 ### Health Score
 
@@ -121,8 +133,8 @@ SF_COL_MAP completo (~línea 121 de audit_engine.py). Soporta **inglés, españo
 | `Canonical Link Element 1` | `Elemento de enlace canónico 1` | `Élément de lien canonique 1` | `canonical` |
 | `Meta Robots 1` | `Meta robots 1` | `Meta Robots 1` | `meta_robots` |
 | `Crawl Depth` | `Nivel de profundidad` | `Profondeur d'exploration` | `depth` |
-| `Inlinks` | `Inlinks` | `Liens entrants` | `inlinks` |
-| `Unique Inlinks` | `Inlinks únicos` | `Liens entrants uniques` | `unique_inlinks` |
+| `Inlinks` | `Enlaces internos` | `Liens entrants` | `inlinks` |
+| `Unique Inlinks` | `Enlaces internos únicos` | `Liens entrants uniques` | `unique_inlinks` |
 | `Is In Sitemap` | `En el mapa del sitio` | `Dans le plan du site` | `in_sitemap` |
 | `Word Count` | `Recuento de palabras` | `Nombre de mots` | `word_count` |
 | `Size (bytes)` | `Tamaño (bytes)` | `Taille (octets)` | `size` |
@@ -134,6 +146,19 @@ SF_COL_MAP completo (~línea 121 de audit_engine.py). Soporta **inglés, españo
 | — | `Impresiones` / `Impressions` | `Impressions` | `impressions` |
 | — | `Porcentaje de clics` / `CTR` | `CTR` | `ctr` |
 | — | `Posición` / `Position` | `Position` | `position` |
+| `X-Robots-Tag 1` | `X-Robots-Tag 1` | — | `x_robots` |
+| `Meta Refresh 1` | `Meta Refresh 1` | — | `meta_refresh` |
+| `H1-2` | `H1-2` | `H1-2` | `h1_2` |
+| `Link Score` | `Link Score` | — | `link_score` |
+| `Hash` | `Hash` | — | `hash` |
+| `HTTP Version` | `Versión HTTP` | — | `http_version` |
+| `Redirect Type` | `Tipo de redirección` | `Type de redirection` | `redirect_type` |
+| `Folder Depth` | `Profundidad de carpeta` | — | `folder_depth` |
+| `Text Ratio` | `Proporción de texto` | — | `text_ratio` |
+| `Outlinks` | `Enlaces salientes` | — | `outlinks` |
+| `External Outlinks` | `Enlaces salientes externos` | — | `external_outlinks` |
+| `No. Near Duplicates` | `Semiduplicados (N.º)` | — | `near_duplicates` |
+| `Meta Keywords 1` | `Meta Keywords 1` | — | `meta_keywords` |
 
 **Guard de columnas críticas**: si tras el renombrado no existe `status`, la app lanza un `ValueError` con las primeras 10 columnas detectadas para facilitar el diagnóstico.
 
@@ -151,6 +176,13 @@ HAS_GSC            # columnas GSC presentes y con datos
 HAS_SD_COL         # 'structured_data' in df.columns
 IS_SHOPIFY         # PLATFORM == 'Shopify'
 HAS_LINKS          # All Links CSV cargado correctamente
+HAS_FOLLOW_DATA    # All Links trae columna Seguir/Follow      → T49, T50, T51
+HAS_LINK_POSITION  # All Links trae Posición del enlace         → T52
+HAS_LINK_SCORE     # 'link_score' presente y sum > 0 (requiere Crawl Analysis en SF)
+HAS_XROBOTS        # 'x_robots' in df.columns                   → T53
+HAS_META_REFRESH   # 'meta_refresh' in df.columns               → T54
+HAS_H1_2           # 'h1_2' in df.columns                       → T55
+HAS_HASH           # 'hash' presente y con datos                → T56
 ```
 
 Todos los checks comprueban su flag antes de ejecutarse — si la columna no existe, el check no genera tarea (sin errores, sin falsos positivos).
@@ -163,10 +195,12 @@ Columnas base de cada DataFrame (`_DETAIL_OPT`):
 ```python
 ['status', 'indexable', 'indexability_status',
  'title', 'title_len', 'meta_desc', 'meta_desc_len',
- 'h1', 'h2', 'canonical', 'meta_robots', 'word_count', 'structured_data',
- 'inlinks', 'depth', 'redirect_url', 'response_time',
+ 'h1', 'h1_2', 'h2', 'canonical', 'meta_robots', 'x_robots', 'meta_refresh',
+ 'word_count', 'text_ratio', 'structured_data', 'hash',
+ 'inlinks', 'link_score', 'depth', 'folder_depth', 'outlinks', 'external_outlinks',
+ 'redirect_url', 'redirect_type', 'response_time',
  'impressions', 'clicks', 'ctr', 'position',
- 'similarity']  # opcional — si SF exporta "Nearest Similarity Match"
+ 'similarity', 'near_duplicates']
 ```
 
 Solo se incluyen las columnas que existen en el DataFrame fuente.
@@ -176,6 +210,7 @@ Solo se incluyen las columnas que existen en el DataFrame fuente.
 - `T35` (dup meta): columna `grupo_dup_meta`
 - `T33` (dup H1 productos): columna `grupo_dup_h1`
 - `T34` (dup H1 colecciones): columna `grupo_dup_h1`
+- `T56` (contenido idéntico): columna `grupo_dup_hash`
 
 **Enriquecimiento con All Links CSV** (cuando `ruta_links_csv` se pasa a `run_audit`):
 
@@ -194,6 +229,9 @@ Criterio de selección: solo se enriquecen tareas donde conocer el origen del li
 | T25 (URLs largas) | `url_larga`, `pagina_origen`, `texto_ancla`, `es_imagen` | Tras renombrar URL, actualizar todos los links internos |
 | T32 (depth > 4) | `url_profunda`, `pagina_origen`, `texto_ancla`, `es_imagen` | Ver el path actual para diseñar el shortcut |
 | T36 (links a noindex) | `pagina_origen`, `url_noindex`, `razon_noindex`, `texto_ancla`, `es_imagen` | El fix ES ir a la página origen y eliminar/nofollow; ordenado por `pagina_origen` para agrupar |
+| T49 (paginación follow) | `pagina_origen`, `url_paginacion`, `texto_ancla`, `posicion_enlace`, `rel_actual` | El fix se hace en la plantilla que genera el enlace |
+| T50 (filtros follow) | `pagina_origen`, `url_filtro`, `texto_ancla`, `posicion_enlace`, `rel_actual` | Igual, en el widget de filtrado |
+| T51 (sistema follow) | `pagina_origen`, `url_sistema`, `texto_ancla`, `posicion_enlace`, `rel_actual` | Igual, en header/footer |
 
 El All Links CSV se exporta desde SF → Exportación en bloque → Enlaces → "Enlaces internos Todo". Parsing flexible (detecta columnas en inglés Y español: `Source`/`Fuente`, `Destination`/`Destino`, `Anchor`/`Ancla`, `Alt Text`/`Texto ALT`, `Type`/`Tipo`).
 
@@ -318,6 +356,7 @@ input, textarea, select, button { font-family: inherit !important; }
 | `Error tokenizing data. Expected N fields, saw M` | SF exporta CSV con columnas extra (GSC + GA4 juntos) o celdas con comas sin escapar — el C parser de pandas falla | `on_bad_lines='warn'` en ambos `read_csv` (Internal All y All Links): filas malformadas se saltan con aviso, la auditoría continúa (`813408e`) |
 | GSC no detectado / inlinks=0 con SF en español en cloud | SF en español exporta `Impresiones`, `Clics`, `Inlinks`, `Nivel de profundidad`, etc. — SF_COL_MAP solo tenía nombres en inglés, así que en cloud ninguna columna española se mapeaba | SF_COL_MAP ampliado con todas las columnas en español (`aba754e`) — ver tabla completa en sección Convención de columnas |
 | `KeyError: 'status'` con SF en francés | SF en francés exporta `Code de réponse` en lugar de `Status Code` — no estaba en SF_COL_MAP | SF_COL_MAP ampliado con columnas en francés + guard `ValueError` con columnas detectadas si `status` sigue ausente |
+| `AttributeError: Can only use .str accessor with string values, not floating` | Si TODAS las URLs del crawl son indexables, `Estado de indexabilidad` llega vacía y pandas la infiere como float → `.str.contains` revienta en el cálculo de razones de no-indexabilidad (~línea 500) | `.astype(str)` sobre la columna y sobre el índice del `value_counts` |
 | `ValueError: Invalid character / found in sheet title` | El nombre de hoja de detalle se construye como `"{TXX} - {Tarea}"` y openpyxl prohíbe `/ \ * ? [ ] :`. T34 ("…colecciones/categorías con H1 duplicado") mete un `/` dentro de los 31 primeros caracteres. También afectaría a T37 (`/collections/all`) | `re.sub(r'[/\\*?\[\]:]', '-', _raw)` antes de truncar a 31 chars (~línea 2924 de audit_engine.py) |
 
 ### T20 — Huérfanas: comportamiento actual y pendiente
@@ -361,16 +400,11 @@ Para entender el formato de salida del Excel ver [DEVELOPMENT_LOG.md](DEVELOPMEN
 
 ## Pendiente de implementar (diseñado, no codificado)
 
-### Bloque 4 — Nofollow (All Links CSV ya disponible en el upload)
+### Bloque 4 — Nofollow ✅ IMPLEMENTADO (T49–T51)
 
-El upload de All Links CSV ya existe en `app.py` (~línea 584). Usar `_df_links` en audit_engine para estos checks:
-
-| ID | Check | Lógica |
-|---|---|---|
-| T49 | Links de paginación sin nofollow | `?page=` / `/page/X` con `follow=true` en `_df_links` |
-| T50 | Links de ordenación/filtros sin nofollow | `?sort_by=`, `?filter.` con `follow=true` |
-| T51 | Links a carrito/checkout sin nofollow | `/cart`, `/checkout` con `follow=true` |
-| — | Links internos duplicados en misma página | misma URL origen→destino más de una vez |
+Hecho. Usa las columnas `Seguir` y `Posición del enlace` del All Links CSV.
+Pendiente de este bloque: links internos duplicados en la misma página
+(misma URL origen→destino más de una vez).
 
 ### Bloque 5 — WordPress-específico (ninguno implementado aún)
 
@@ -388,7 +422,7 @@ Checks habituales: páginas de autor indexables, archivos año/mes indexables, `
 
 - Unificar archivos legacy (`audit_newcop.py`, `audit_newcop_v2.py`, `audit_step1.py`)
 - Mover `_tc_card()` a nivel de módulo en `app.py`
-- Tests unitarios para los checks T01–T48
+- Tests unitarios para los checks T01–T56
 - Responsive: ajustar `st.columns([1.8, 1, 1, 1, 1])` en pantallas estrechas
 
 ### Ideas para más adelante (requieren integración externa)

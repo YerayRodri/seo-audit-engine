@@ -1032,6 +1032,50 @@ if st.session_state.get('audit_results'):
 
         st.markdown("---")
 
+        # ── ENLAZADO INTERNO ──────────────────────────────────────────────────
+        st.markdown('<div class="dash-section">🔗 Enlazado Interno</div>', unsafe_allow_html=True)
+        _lc1, _lc2, _lc3, _lc4 = st.columns(4)
+
+        _has_pos = dash.get('has_link_position')
+        _n_ctx   = dash.get('n_links_contextual', 0)
+        _n_boil  = dash.get('n_links_boilerplate', 0)
+        _tot_lnk = _n_ctx + _n_boil
+        _pct_ctx = (_n_ctx / _tot_lnk * 100) if _tot_lnk else 0
+
+        _lc1.markdown(_tc_card("Enlaces contextuales",
+                      f"{_pct_ctx:.0f}% ({_n_ctx:,})" if _has_pos else "N/D — sube el All Links",
+                      warn=_has_pos and _pct_ctx < 30,
+                      na=not _has_pos), unsafe_allow_html=True)
+        _lc2.markdown(_tc_card("Enlaces de plantilla",
+                      f"{_n_boil:,}" if _has_pos else "N/D",
+                      warn=_has_pos and _n_boil > _n_ctx,
+                      na=not _has_pos), unsafe_allow_html=True)
+        _lc3.markdown(_tc_card("Págs. sin enlace contextual",
+                      f"{dash.get('n_no_contextual', 0):,}" if _has_pos else "N/D",
+                      warn=dash.get('n_no_contextual', 0) > 0,
+                      na=not _has_pos), unsafe_allow_html=True)
+
+        _has_ls = dash.get('has_link_score')
+        _ls_med = dash.get('link_score_median')
+        _lc4.markdown(_tc_card("Link Score mediano",
+                      f"{_ls_med:.0f}" if _has_ls and _ls_med is not None else "N/D — activa Crawl Analysis",
+                      warn=_has_ls and _ls_med is not None and _ls_med < 10,
+                      na=not _has_ls), unsafe_allow_html=True)
+
+        if _has_pos and _pct_ctx < 30 and _tot_lnk:
+            st.caption(
+                f"⚠️ Solo el {_pct_ctx:.0f}% del enlazado interno son enlaces desde contenido — "
+                "el resto es menú, header y footer, que se repiten en todo el site y apenas "
+                "transmiten relevancia temática. Ver tarea T52."
+            )
+        elif not _has_pos:
+            st.caption(
+                "Sube el All Links CSV de Screaming Frog para analizar el enlazado interno "
+                "(enlaces contextuales vs plantilla, nofollow, páginas sin respaldo editorial)."
+            )
+
+        st.markdown("---")
+
         # ── GSC ───────────────────────────────────────────────────────────────
         if dash.get('has_gsc'):
             st.markdown('<div class="dash-section">📈 Señales GSC</div>', unsafe_allow_html=True)
