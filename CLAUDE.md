@@ -21,6 +21,7 @@ Stack: Python 3.9+, Streamlit 1.56.0, pandas 3.0.2, openpyxl 3.1.5
 | `app.py` | ~1220 | UI Streamlit: formulario, CSS, dashboard, 4 tabs |
 | `audit_engine.py` | ~2870 | Motor de análisis: T01–T48, output Excel, detail_dfs |
 | `requirements.txt` | — | Dependencias |
+| `.streamlit/config.toml` | — | `maxUploadSize`/`maxMessageSize` = 1024 MB — sube el límite de subida de 200 MB (default) para los All Links CSV de proyectos grandes |
 | `config_newcop.py` | — | Config de cliente de ejemplo |
 | `knowledge/` | — | Checklists, guías, reglas de priorización |
 | `templates/` | — | Plantillas Excel de salida |

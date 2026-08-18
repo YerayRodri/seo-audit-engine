@@ -1,0 +1,5 @@
+[server]
+# Límite de subida por archivo, en MB (default de Streamlit: 200).
+# Aplica a TODOS los file_uploader de la app: Internal All CSV y All Links CSV.
+maxUploadSize = 1024
+maxMessageSize = 1024
