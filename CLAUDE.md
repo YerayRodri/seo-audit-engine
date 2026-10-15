@@ -162,7 +162,7 @@ SF_COL_MAP completo (~línea 121 de audit_engine.py). Soporta **inglés, españo
 
 **Guard de columnas críticas**: si tras el renombrado no existe `status`, la app lanza un `ValueError` con las primeras 10 columnas detectadas para facilitar el diagnóstico.
 
-**CRÍTICO**: Con SF en español en cloud (sin `profiler_csv.py`), el SF_COL_MAP es el único mecanismo de renombrado. Antes del commit `aba754e` los exports en español no detectaban GSC ni inlinks en cloud.
+Con SF en español en cloud (sin `profiler_csv.py`), el SF_COL_MAP es el único mecanismo de renombrado: sin él no se detectan ni GSC ni inlinks.
 
 La columna `H1-1` se normaliza como `h1` vía SF_COL_MAP, pero `profiler_csv` puede renombrarla como `h1_1`. Los checks T33/T34 usan `_h1_col` que detecta ambas automáticamente.
 
@@ -361,7 +361,7 @@ input, textarea, select, button { font-family: inherit !important; }
 
 ### T20 — Huérfanas: comportamiento actual y pendiente
 
-**Comportamiento actual (commit `aba754e`):**
+**Comportamiento actual:**
 - Detecta páginas HTML indexables con `inlinks = 0` (columna `Inlinks` / `Inlinks`)
 - Con GSC: solo muestra las que tienen impresiones > T_ORPHAN_IMPRESSIONS (100)
 - Sin GSC: muestra TODAS las páginas HTML+200+indexable con inlinks=0

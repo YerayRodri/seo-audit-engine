@@ -100,7 +100,7 @@ def autofit_columns(ws, min_w=10, max_w=50):
 
 ## 4) Fuentes de datos: MCP vs archivos
 
-### GSC vía MCP (`mcp__google-search-console__search_analytics`)
+### GSC vía MCP (`search_analytics` en el servidor `gsc-*` que corresponda)
 - Ventaja: datos frescos, sin límite de export manual, acceso a más de 1000 filas
 - Usar `rowLimit: 25000` para cubrir sitios grandes
 - Dimensiones disponibles: `page`, `query`, `country`, `device`, `date`
@@ -112,7 +112,7 @@ def autofit_columns(ws, min_w=10, max_w=50):
 - `serp_organic_live_advanced` — SERP real para queries concretas
 - Usar batches de 10 keywords para no superar rate limits
 
-### GA4 vía MCP (`mcp__analytics-vonX__run_report`)
+### GA4 vía MCP (`run_report` en el servidor `analytics-von1`, `analytics-von2` o `analytics-von3`, según la cuenta del cliente)
 - Métricas útiles: `sessions`, `conversions`, `totalRevenue`
 - Dimensión: `landingPage` cruzada con `sessionDefaultChannelGroup = 'Organic Search'`
 - Usar para subir prioridad de URLs con revenue
@@ -169,7 +169,20 @@ Priorizar: cadenas, enlazados internamente, en sitemap, con señales GSC
 
 ---
 
-## 7) Regla de robustez
+## 7) Métodos que suelen fallar o empeorar el rendimiento
+
+Rescatado de `Crear Auditoria  tecnica/` antes de eliminar esa carpeta duplicada (2026-09-30).
+Cinco de estos siete no estaban recogidos en ninguna otra parte de este documento:
+
+- cruzar SF y GSC **sin normalizar URLs** (ver 3-C, que lo dice en positivo)
+- inferir canibalización con Pages + Queries **sin Query × Page**
+- pedir demasiados exports separados cuando `Internal All` ya contiene suficiente
+- usar lógica de plantilla demasiado rígida por CMS
+- sobrediagnosticar internacionalización sin señales reales
+- depender de OCR o lectura visual **si ya hay datos tabulares**
+- usar demasiados bucles en pandas para datasets grandes (ver 3-D)
+
+## 8) Regla de robustez
 
 Si una parte del análisis no puede demostrarse con el dataset disponible:
 - No inventarla

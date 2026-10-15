@@ -300,42 +300,61 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     _df_links = None
     if ruta_links_csv:
         try:
+            # Leer primero solo la cabecera: el All Links puede pesar GB y de sus ~15
+            # columnas solo se usan 8. Con usecols se ahorra ~50% de RAM (el XPath de
+            # "Ruta del enlace" es la columna más pesada y no se usa).
+            _enc_ok = None
             for _enc in ('utf-8', 'latin-1', 'utf-8-sig'):
                 try:
-                    _links_raw = pd.read_csv(ruta_links_csv, encoding=_enc, low_memory=False, dtype=str, on_bad_lines='warn')
+                    _links_hdr = pd.read_csv(ruta_links_csv, encoding=_enc, nrows=0)
+                    _enc_ok = _enc
                     break
                 except UnicodeDecodeError:
                     continue
-            _links_raw.columns = [c.strip().lower().replace(' ', '_') for c in _links_raw.columns]
-            print(f"  All Links CSV columnas detectadas: {list(_links_raw.columns[:8])}")
+            if _enc_ok is None:
+                raise ValueError('No se pudo decodificar el All Links CSV (utf-8/latin-1/utf-8-sig)')
+            _cols_orig = list(_links_hdr.columns)
+            _cols_norm = [c.strip().lower().replace(' ', '_') for c in _cols_orig]
+            _norm2orig = dict(zip(_cols_norm, _cols_orig))
+            print(f"  All Links CSV columnas detectadas: {_cols_norm[:8]}")
             # Nombres en inglés Y español (SF exporta según idioma de la app)
-            _lsrc = next((c for c in _links_raw.columns if c in (
+            _lsrc = next((c for c in _cols_norm if c in (
                 'source', 'source_url', 'from', 'from_url',
                 'fuente', 'origen', 'url_origen', 'desde')), None)
-            _ldst = next((c for c in _links_raw.columns if c in (
+            _ldst = next((c for c in _cols_norm if c in (
                 'destination', 'destination_url', 'to', 'to_url', 'href',
                 'destino', 'url_destino', 'hasta')), None)
-            _lanc = next((c for c in _links_raw.columns if c in (
+            _lanc = next((c for c in _cols_norm if c in (
                 'anchor', 'anchor_text', 'link_text', 'text',
                 'texto_ancla', 'ancla', 'texto_de_ancla', 'texto_anclaje')), None)
-            _lalt = next((c for c in _links_raw.columns if c in (
+            _lalt = next((c for c in _cols_norm if c in (
                 'alt_text', 'alt', 'image_alt', 'alternative_text',
                 'texto_alternativo', 'alt_texto', 'texto_alt')), None)
-            _ltyp = next((c for c in _links_raw.columns if c in (
+            _ltyp = next((c for c in _cols_norm if c in (
                 'type', 'link_type', 'tipo', 'tipo_enlace')), None)
-            _ltag = next((c for c in _links_raw.columns if c in (
+            _ltag = next((c for c in _cols_norm if c in (
                 'tag', 'element', 'html_tag', 'etiqueta')), None)
             # Follow / nofollow del enlace (SF: "Follow" / "Seguir")
-            _lfol = next((c for c in _links_raw.columns if c in (
+            _lfol = next((c for c in _cols_norm if c in (
                 'follow', 'seguir', 'suivre')), None)
             # Posición del enlace en el HTML (SF: "Link Position" / "Posición del enlace")
-            _lpos = next((c for c in _links_raw.columns if c in (
+            _lpos = next((c for c in _cols_norm if c in (
                 'link_position', 'posición_del_enlace', 'posicion_del_enlace',
                 'position_du_lien')), None)
-            _lrel = next((c for c in _links_raw.columns if c in ('rel', 'atributo_rel')), None)
+            _lrel = next((c for c in _cols_norm if c in ('rel', 'atributo_rel')), None)
             print(f"  All Links columnas mapeadas → src:{_lsrc} dst:{_ldst} anc:{_lanc} typ:{_ltyp} "
                   f"follow:{_lfol} pos:{_lpos}")
             if _lsrc and _ldst:
+                # Releer solo las columnas que se usan realmente
+                _wanted = [c for c in (_lsrc, _ldst, _lanc, _lalt, _ltyp, _ltag, _lfol, _lpos, _lrel) if c]
+                _usecols = [_norm2orig[c] for c in _wanted]
+                _links_raw = pd.read_csv(
+                    ruta_links_csv, encoding=_enc_ok, usecols=_usecols,
+                    low_memory=False, dtype=str, on_bad_lines='warn')
+                _links_raw.columns = [c.strip().lower().replace(' ', '_') for c in _links_raw.columns]
+                _mem_mb = _links_raw.memory_usage(deep=True).sum() / 1e6
+                print(f"  All Links: {len(_usecols)} de {len(_cols_orig)} columnas leídas "
+                      f"({_mem_mb:,.0f} MB en RAM)")
                 _rename_l = {_lsrc: 'link_source', _ldst: 'link_dest'}
                 if _lanc: _rename_l[_lanc] = 'anchor'
                 if _lalt: _rename_l[_lalt] = 'alt_text'
@@ -344,7 +363,8 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 if _lfol: _rename_l[_lfol] = 'follow'
                 if _lpos: _rename_l[_lpos] = 'link_position'
                 if _lrel: _rename_l[_lrel] = 'link_rel'
-                _df_links = _links_raw.rename(columns=_rename_l).copy()
+                _df_links = _links_raw.rename(columns=_rename_l)
+                del _links_raw  # el rename ya devuelve un objeto nuevo: no duplicar en RAM
                 # Normalizar URLs (quitar trailing slash para matching consistente)
                 _df_links['link_source'] = _df_links['link_source'].astype(str).str.strip().str.rstrip('/')
                 _df_links['link_dest']   = _df_links['link_dest'].astype(str).str.strip().str.rstrip('/')
@@ -384,7 +404,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 print(f"  All Links CSV cargado: {len(_df_links):,} enlaces "
                       f"(follow:{HAS_FOLLOW_DATA} posición:{HAS_LINK_POSITION})")
             else:
-                print(f"  All Links CSV: no se encontraron columnas source/destination. Columnas disponibles: {list(_links_raw.columns)}")
+                print(f"  All Links CSV: no se encontraron columnas source/destination. Columnas disponibles: {_cols_orig}")
         except Exception as _links_err:
             print(f"  Warning: All Links CSV no cargado: {_links_err}")
 
