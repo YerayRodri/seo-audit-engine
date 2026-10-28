@@ -359,6 +359,35 @@ input, textarea, select, button { font-family: inherit !important; }
 | `AttributeError: Can only use .str accessor with string values, not floating` | Si TODAS las URLs del crawl son indexables, `Estado de indexabilidad` llega vacía y pandas la infiere como float → `.str.contains` revienta en el cálculo de razones de no-indexabilidad (~línea 500) | `.astype(str)` sobre la columna y sobre el índice del `value_counts` |
 | `ValueError: Invalid character / found in sheet title` | El nombre de hoja de detalle se construye como `"{TXX} - {Tarea}"` y openpyxl prohíbe `/ \ * ? [ ] :`. T34 ("…colecciones/categorías con H1 duplicado") mete un `/` dentro de los 31 primeros caracteres. También afectaría a T37 (`/collections/all`) | `re.sub(r'[/\\*?\[\]:]', '-', _raw)` antes de truncar a 31 chars (~línea 2924 de audit_engine.py) |
 
+### Arreglos del 2026-10-28 (equipo de agentes de la auditoría pública)
+
+El motor se copió a `YerayPersonal/auditoria-seo/` (versión pública) y un equipo de agentes lo pasó por 23 exports
+reales. Los arreglos se aplicaron en las dos copias, que siguen siendo idénticas (`audit_engine.py`). Informes completos
+en `YerayPersonal/auditoria-seo/investigacion/` (sobre todo `qa-motor.md` y `RESUMEN.md`). La versión anterior está en
+git (`git diff audit_engine.py`).
+
+| Fallo | Arreglo |
+|---|---|
+| Coma decimal de SF en español: posición, CTR y tiempo de respuesta pasaban a 0 → T11, T12 y T23 no saltaban nunca sin `profiler_csv` | Coma decimal autodetectada |
+| `Clicks` (SF en inglés con GSC) no se mapeaba; `Closest Similarity/Near Duplicate Match` (nombres nuevos) tampoco; mayúsculas distintas (`Size (Bytes)`) | Añadidos a SF_COL_MAP y comparación sin mayúsculas |
+| T26/T28/T29/T30/T31 dependían de alias que solo pone `profiler_csv` | Alias en el motor (si ya existen, no se tocan) |
+| T15 por subcadena: `/cart` encajaba con `/carteras` o `/cartuchos`; `?q=` con `/collections/vendors?q=` (duplicaba T38) | Segmento de ruta; `?q=` solo en /search y `?s=` solo en la portada |
+| T19/T53 contaban el login de Shopify y subdominios de cuenta (miles de «302» en una tienda Shopify grande) | Solo URLs del dominio auditado y sin rutas de cuenta/login |
+| T17 nunca saltaba (buscaba canonical a otra URL entre las indexables) | HTML 200 canonicalizadas, sin parámetros ni paginación |
+| T26 marcaba como duplicado el mismo título en /en/ y /fr/, y los de una paginación (/blog/ y /blog/page/2/); T35 igual con las metas de la paginación | Agrupa por carpeta de idioma y excluye paginaciones |
+| T05 miraba `//` también en la query; T16 trataba `?color=` de una ficha como filtro; T24 contaba paginación, filtros y `?variant=`; T27 incluía URLs que ya redirigen | Corregidos |
+| Un CSV que no es Internal All daba nota 100 | `ValueError` con las columnas detectadas |
+| **Inyección de fórmulas:** un `<title>` «=HYPERLINK(…)» llegaba como fórmula al Excel | Ningún texto se guarda como fórmula |
+| Un All Links de 1,9 GB llegaba a 2,65 GB de RAM | Lectura por trozos con categorías: 1,06 GB |
+| Preset Generic dejaba la web sin revisión on-page (y con mejor nota) | `SEO_TYPES` del preset Generic ampliado en `app.py` |
+
+⚠️ **Sigue pendiente (bloque 2 del plan público):** T21/T22 (sitemap) y T42–T48 (datos estructurados) no saltan con
+exports reales: SF no pone esas columnas en el Internal All, vienen en sus exports propios (Sitemaps, Datos
+estructurados). Hay que leer esos exports.
+
+⚠️ Los cambios están **sin commit** y Streamlit Cloud despliega desde GitHub: hasta que se suba, la versión en la nube
+sigue con el motor anterior. El `.venv` local de esta carpeta no tiene Streamlit (la app no arranca en local).
+
 ### T20 — Huérfanas: comportamiento actual y pendiente
 
 **Comportamiento actual:**
@@ -395,6 +424,20 @@ input, textarea, select, button { font-family: inherit !important; }
 - [REGLAS_PRIORIZACION_P0_P3_SEO.md](knowledge/REGLAS_PRIORIZACION_P0_P3_SEO.md)
 
 Para entender el formato de salida del Excel ver [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md).
+
+### Dos copias de la skill `auditoria-seo`
+
+La skill vive en **dos sitios** (decisión 2026-10-15, al montar los agentes de Kilo):
+
+| Copia | Ruta | Rutas de `knowledge/` |
+|---|---|---|
+| Local | `.claude/skills/auditoria-seo/SKILL.md` | **Relativas** — solo funciona con el cwd en esta carpeta |
+| Global | `~/.agents/skills/auditoria-seo/SKILL.md` | **Absolutas** a `VON/seo-audit-claude/knowledge/` — funciona desde cualquier directorio |
+
+La global existe para que un agente pueda auditar sin cambiar de directorio. Se mantienen **a mano**:
+si se edita una, hay que replicar el cambio en la otra (salvo el bloque del PASO 0, que difiere a
+propósito). **No pasar las rutas de la copia global a relativas**: leería 0 ficheros y continuaría
+como si la base de conocimiento estuviera cargada.
 
 ---
 

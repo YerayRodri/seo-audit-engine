@@ -105,7 +105,7 @@ PRESETS = {
     "Generic": {
         "URL_PATTERNS": [],
         "SYSTEM_PATTERNS": [],
-        "SEO_TYPES": ["product", "blog", "page"],
+        "SEO_TYPES": ["homepage", "other", "product", "blog", "page", "collection"],  # 2026-10-28: con URL_PATTERNS vacío todo es «other»; sin él aquí no se revisaba nada on-page
         "HAS_CART_RECO": False,
         "PAGINATION_PARAMS": ["page"],
         "PAGINATION_PATH_REGEX": None,

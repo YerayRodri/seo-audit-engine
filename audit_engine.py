@@ -12,6 +12,7 @@ Requiere: profiler_csv.py en el mismo directorio
 
 import sys
 import re
+from urllib.parse import urlsplit
 import argparse
 import importlib.util
 import warnings
@@ -223,8 +224,19 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         'No. Near Duplicates': 'near_duplicates',
         'Semiduplicados (N.º)': 'near_duplicates',
         'Meta Keywords 1': 'meta_keywords',
+        # Añadidos el 2026-10-28 (informe de exports de SF): SF en inglés con GSC exporta «Clicks» (sin esto los
+        # clics no se leían) y la columna de similitud cambió de nombre
+        'Clicks': 'clicks',
+        'Closest Similarity Match': 'similarity',
+        'Closest Near Duplicate Match': 'similarity',
     }
-    sf_rename = {k: v for k, v in SF_COL_MAP.items() if k in df_raw.columns and v not in df_raw.columns}
+    # Sin distinguir mayúsculas: SF ha cambiado alguna (Size (bytes) / Size (Bytes))
+    _col_map_lower = {k.lower(): v for k, v in SF_COL_MAP.items()}
+    sf_rename = {}
+    for _c in df_raw.columns:
+        _v = SF_COL_MAP.get(_c) or _col_map_lower.get(_c.lower())
+        if _v and _v not in df_raw.columns and _v not in sf_rename.values():
+            sf_rename[_c] = _v
     if sf_rename:
         df_raw.rename(columns=sf_rename, inplace=True)
         print(f"  SF columns normalized: {list(sf_rename.keys())}")
@@ -239,6 +251,13 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             f"Contacta con soporte indicando estos nombres de columna."
         )
 
+    # Guard: tiene que ser un Internal All, no el export de enlaces u otro (antes devolvía nota 100 sin avisar)
+    if 'url' not in df_raw.columns or not ({'indexable', 'content_type', 'title'} & set(df_raw.columns)):
+        raise ValueError(
+            "El CSV no parece un «Internal All» de Screaming Frog (Interno > Todo): faltan la dirección, la "
+            f"indexabilidad o el título. Primeras columnas detectadas: {list(df_raw.columns[:10])}."
+        )
+
     # Auto-detectar GSC (cuando profiler_csv no está disponible, e.g. cloud)
     if not HAS_GSC:
         HAS_GSC = (
@@ -250,6 +269,14 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     # Normalizar decimales antes de coerción numérica
     DECIMAL_FIX_COLS = ['ctr', 'position', 'response_time']
+    if not DECIMAL_COMMA:
+        for _c in DECIMAL_FIX_COLS:
+            if _c in df_raw.columns and not pd.api.types.is_numeric_dtype(df_raw[_c]):
+                _s = df_raw[_c].dropna().astype(str).head(500)
+                if len(_s) and _s.str.fullmatch(r'-?\d+,\d+').mean() > 0.5:
+                    DECIMAL_COMMA = True
+                    print('  Coma decimal detectada')
+                    break
     if DECIMAL_COMMA:
         for col in DECIMAL_FIX_COLS:
             if col in df_raw.columns:
@@ -265,6 +292,12 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     for col in NUM_COLS:
         if col in df_raw.columns:
             df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce').fillna(0)
+
+    # Alias que esperan T26–T31: los ponía el profiler_csv de VON (no copiado); sin ellos esos checks no se ejecutan
+    for _src, _alias in (('title', 'title_1'), ('title_len', 'title_1_length'), ('h1', 'h1_1'), ('h2', 'h2_1'),
+                         ('canonical', 'canonical_link_element_1')):
+        if _src in df_raw.columns and _alias not in df_raw.columns:
+            df_raw[_alias] = df_raw[_src]
 
     # Normalizar CTR 0-100 → 0-1 (auto-detect escala)
     if HAS_GSC and 'ctr' in df_raw.columns:
@@ -348,10 +381,20 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 # Releer solo las columnas que se usan realmente
                 _wanted = [c for c in (_lsrc, _ldst, _lanc, _lalt, _ltyp, _ltag, _lfol, _lpos, _lrel) if c]
                 _usecols = [_norm2orig[c] for c in _wanted]
-                _links_raw = pd.read_csv(
-                    ruta_links_csv, encoding=_enc_ok, usecols=_usecols,
-                    low_memory=False, dtype=str, on_bad_lines='warn')
-                _links_raw.columns = [c.strip().lower().replace(' ', '_') for c in _links_raw.columns]
+                _KEEP_T = {'href', 'img', 'image', 'src', 'hyperlink', 'enlace', 'imagen', 'hipervínculo', 'hipervinculo'}
+                _partes = []
+                for _ch in pd.read_csv(ruta_links_csv, encoding=_enc_ok, usecols=_usecols, dtype=str,
+                                       on_bad_lines='warn', chunksize=100_000):
+                    _ch.columns = [c.strip().lower().replace(' ', '_') for c in _ch.columns]
+                    if _ltyp:
+                        _ch = _ch[_ch[_ltyp].str.lower().str.strip().isin(_KEEP_T)]
+                    for _c in (_lsrc, _ldst):
+                        _ch[_c] = _ch[_c].astype(str).str.strip().str.rstrip('/')
+                    _partes.append(_ch.astype('category'))
+                from pandas.api.types import union_categoricals
+                _links_raw = pd.DataFrame({_c: union_categoricals([_p[_c] for _p in _partes], ignore_order=True)
+                                           for _c in _partes[0].columns}) if _partes else pd.DataFrame(columns=_wanted)
+                del _partes
                 _mem_mb = _links_raw.memory_usage(deep=True).sum() / 1e6
                 print(f"  All Links: {len(_usecols)} de {len(_cols_orig)} columnas leídas "
                       f"({_mem_mb:,.0f} MB en RAM)")
@@ -366,8 +409,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
                 _df_links = _links_raw.rename(columns=_rename_l)
                 del _links_raw  # el rename ya devuelve un objeto nuevo: no duplicar en RAM
                 # Normalizar URLs (quitar trailing slash para matching consistente)
-                _df_links['link_source'] = _df_links['link_source'].astype(str).str.strip().str.rstrip('/')
-                _df_links['link_dest']   = _df_links['link_dest'].astype(str).str.strip().str.rstrip('/')
+                # (la normalización de origen/destino ya se hizo por trozos)
                 # Filtrar a enlaces reales (excluir canonical, hreflang, etc.)
                 if 'link_type' in _df_links.columns:
                     _keep = _df_links['link_type'].str.lower().str.strip().isin([
@@ -466,8 +508,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         """Detecta // en la ruta (excluye el protocolo)."""
         if not isinstance(url, str):
             return False
-        path_part = url.split('://', 1)[-1]
-        return '//' in path_part
+        return '//' in urlsplit(url).path  # 2026-10-28: solo la ruta; en la query es legítimo (?url=https://…)
 
 
     df['lang_dir']       = df['url'].apply(extract_lang)
@@ -652,8 +693,14 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     # ── Métricas adicionales ────────────────────────────────────────────────────
 
+    # URLs del propio sitio que no son de sistema (login, cuenta…) ni de otro subdominio
+    _host_ok = DOMAIN.lower().removeprefix('www.')
+    _mask_propia = df['url'].apply(lambda u: isinstance(u, str) and (
+        (urlsplit(u).hostname or '').removeprefix('www.') == _host_ok)) & (df['url_type'] != 'system') & ~df['url'].astype(str).str.contains(
+        r'/customer_authentication/|/account|/mi-cuenta|/my-account|/login', case=False, regex=True)
+
     # Redirects 302 (temporales)
-    df_302 = df[df['status'] == 302]
+    df_302 = df[(df['status'] == 302) & _mask_propia]
 
     # URLs sensibles indexables (cart, checkout, login, search…)
     _SENSITIVE = [
@@ -662,8 +709,14 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         '/wishlist', '/mi-cuenta', '/my-account', '/basket',
         '/carro', '/pedido', '/factura',
     ]
+    _SENSITIVE_RE = re.compile(
+        r'/(cart|checkout|login|account|register|buscar|search|cesta|carrito|wishlist|mi-cuenta|my-account|basket|'
+        r'carro|pedido|factura)(/|$|\?|\.)|'
+        # 2026-10-28: «?q=» solo cuenta dentro de /search (ya cubierto arriba) y «?s=» solo en la portada (buscador de
+        # WordPress); antes cualquier ?q= contaba, y /collections/vendors?q=marca salía aquí y además en T38
+        r'^https?://[^/?#]+/?\?(?:[^#]*&)?s=', re.I)
     _mask_sensitive = df_indexable['url'].apply(
-        lambda u: any(p in u.lower() for p in _SENSITIVE) if isinstance(u, str) else False
+        lambda u: bool(_SENSITIVE_RE.search(u)) if isinstance(u, str) else False
     )
     df_sensitive = df_indexable[_mask_sensitive]
 
@@ -678,19 +731,23 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     _mask_facets = df_indexable['url'].apply(
         lambda u: bool(re.search(_facet_combined, u, re.I)) if isinstance(u, str) else False
     )
-    df_facets = df_indexable[_mask_facets]
+    # 2026-10-28: color=/size=/talla=/variant= en una ficha de producto es una variante, no un filtro
+    _mask_variante_prod = (df_indexable['url_type'] == 'product') & df_indexable['url'].astype(str).str.contains(
+        r'[?&](?:color|colour|size|talla|variant)=', case=False, regex=True)
+    df_facets = df_indexable[_mask_facets & ~_mask_variante_prod]
 
     # Canonical a URL diferente (non-self canonical en páginas indexables)
+    # 2026-10-28: antes se buscaba entre las indexables y nunca saltaba (SF marca esas páginas como «Canonicalised»,
+    # no indexables). Ahora: HTML 200 con canonical a otra URL, sin parámetros ni paginación (las variantes y filtros con
+    # canonical a la principal son lo normal; una página «limpia» que apunta a otra suele ser un error).
     if 'canonical' in df.columns:
+        _can = df['canonical'].astype(str).str.strip()
         _mask_non_self_can = (
-            df_indexable['canonical'].notna() &
-            (df_indexable['canonical'].astype(str).str.strip() != '') &
-            (
-                df_indexable['canonical'].astype(str).str.strip()
-                != df_indexable['url'].astype(str).str.strip()
-            )
+            (df['status'] == 200) & df['canonical'].notna() & (_can != '') & (_can.str.lower() != 'nan') &
+            (_can.str.rstrip('/') != df['url'].astype(str).str.strip().str.rstrip('/')) &
+            ~df['url'].astype(str).str.contains('?', regex=False) & ~df['is_pagination']
         )
-        df_non_self_canonical = df_indexable[_mask_non_self_can]
+        df_non_self_canonical = df[_mask_non_self_can]
     else:
         df_non_self_canonical = pd.DataFrame(columns=df.columns)
 
@@ -779,8 +836,11 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         df_slow = pd.DataFrame(columns=df.columns)
 
     # T24 — URLs con parámetros indexables
+    # 2026-10-28: sin paginación, filtros (T16) ni ?variant= (T41), que ya tienen su tarea o son legítimos
     df_parametered = df_indexable[
-        df_indexable['url'].str.contains(r'\?', na=False)
+        df_indexable['url'].str.contains(r'\?', na=False) & ~df_indexable['is_pagination'] &
+        ~df_indexable.index.isin(df_facets.index) &
+        ~df_indexable['url'].str.contains('variant=', na=False, regex=False)
     ].copy()
 
     # T25 — URLs largas (>115 caracteres) indexables
@@ -791,9 +851,13 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     # T26 — Titles duplicados entre páginas indexables
     if HAS_TITLE_1:
-        _titles_ser = df_indexable['title_1'].dropna()
+        # Sin paginaciones: /blog/ y /blog/page/2/ suelen compartir título y no es un fallo (2026-10-28)
+        _titles_ser = df_indexable.loc[~df_indexable['is_pagination'], 'title_1'].dropna()
         _titles_ser = _titles_ser[_titles_ser.str.strip() != '']
-        _dup_titles = _titles_ser[_titles_ser.duplicated(keep=False)]
+        # Agrupado por carpeta de idioma (/en/, /pt-br/…): el mismo título en dos idiomas no es un duplicado
+        _lang_t = df_indexable.loc[_titles_ser.index, 'url'].astype(str).str.extract(
+            r'^https?://[^/]+/([a-z]{2}(?:-[a-z]{2})?)(?:/|$)', flags=re.I)[0].fillna('').str.lower()
+        _dup_titles = _titles_ser[(_lang_t + '|' + _titles_ser.astype(str)).duplicated(keep=False)]
         df_dup_titles = df_indexable[
             df_indexable.index.isin(_dup_titles.index)
         ].copy()
@@ -808,7 +872,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     if HAS_GSC and 'indexable' in df.columns:
         df_noindex_with_gsc = df[
             (df['indexable'].astype(str).str.strip() != idx_pos_val) &
-            (df['impressions'] > 0)
+            (df['impressions'] > 0) & ~df['status'].between(300, 399)  # 2026-10-28: sin las que ya redirigen
         ].copy()
     elif HAS_GSC:
         df_noindex_with_gsc = df[
@@ -908,7 +972,8 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
 
     # T35 — Meta descriptions duplicadas entre páginas SEO indexables
     if 'meta_desc' in df.columns:
-        _meta_vals = df_seo['meta_desc'].dropna().astype(str).str.strip()
+        # Sin paginaciones, igual que T26 (2026-10-28)
+        _meta_vals = df_seo.loc[~df_seo['is_pagination'], 'meta_desc'].dropna().astype(str).str.strip()
         _meta_vals = _meta_vals[_meta_vals != '']
         _dup_meta_mask = _meta_vals.str.lower().duplicated(keep=False)
         df_dup_meta = df_seo.loc[_meta_vals[_dup_meta_mask].index].copy()
@@ -1004,7 +1069,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     # T53 — noindex servido por cabecera HTTP X-Robots-Tag (invisible en meta robots)
     if HAS_XROBOTS:
         df_xrobots_noindex = df[
-            df['x_robots'].astype(str).str.contains('noindex', case=False, na=False)
+            df['x_robots'].astype(str).str.contains('noindex', case=False, na=False) & _mask_propia
         ]
     else:
         df_xrobots_noindex = _EMPTY
@@ -1076,7 +1141,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             _links_facet_follow = _fol[_fol['link_dest'].isin(_facet_urls)] if _facet_urls else None
 
             _mask_sens_all = df['url'].apply(
-                lambda u: any(x in u.lower() for x in _SENSITIVE) if isinstance(u, str) else False)
+                lambda u: bool(_SENSITIVE_RE.search(u)) if isinstance(u, str) else False)
             _sens_urls = set(df[_mask_sens_all]['url'].astype(str).str.rstrip('/').tolist())
             _links_sensitive_follow = _fol[_fol['link_dest'].isin(_sens_urls)] if _sens_urls else None
 
@@ -1578,7 +1643,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
         top_can_target = df_non_self_canonical.iloc[0]['canonical'] if n_non_self_can > 0 else ''
         add_task(
             'T17', 'P1', 'Canonicals / Indexación',
-            f'Revisar {n_non_self_can:,} páginas indexables con canonical apuntando a otra URL',
+            f'Revisar {n_non_self_can:,} páginas sin parámetros con canonical apuntando a otra URL',
             f'{n_non_self_can:,} páginas tienen canonical tag configurado hacia una URL diferente '
             'a sí mismas. Puede ser intencional (variantes de producto) o un error.',
             f'{n_non_self_can:,} URLs con canonical ≠ propia URL. '
@@ -3627,6 +3692,15 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
     print(f"  Hojas de detalle: {len(_detail_sheet_map)} tareas")
 
     # Guardar
+    # Ningún texto de la web auditada se guarda como fórmula (2026-10-28: un <title> «=HYPERLINK(…)» llegaba como
+    # fórmula). El motor no escribe fórmulas propias. El prefijo invisible evita que revivan al editar o exportar a CSV.
+    _PELIGROSOS = ('=', '+', '-', '@', '\t', '\r', '\n', '＝', '＋', '－', '＠')
+    for _ws in wb.worksheets:
+        for _fila in _ws.iter_rows():
+            for _c in _fila:
+                if isinstance(_c.value, str) and (_c.data_type == 'f' or _c.value.startswith(_PELIGROSOS)):
+                    _c.value = '\u200b' + _c.value if _c.value[:1] in '=+@＝＋＠' else _c.value
+                    _c.data_type = 's'
     wb.save(OUTPUT_PATH)
     print(f"\n✅ Excel guardado: {OUTPUT_PATH}")
     print(f"\nResumen final:")
@@ -3739,6 +3813,7 @@ def run_audit(cfg, ruta_csv, output_path, ruta_links_csv=None):
             'health_score': _health_score,
         },
         'detail_dfs': detail_dfs,
+        'n_urls': {_t: int(len(_d)) for _t, _d in _task_df_map.items() if _d is not None and _t in _task_ids_generated},
     }
 
 
